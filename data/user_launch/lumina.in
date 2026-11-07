@@ -1,0 +1,17 @@
+# Lumina for Haiku — user session integration (installed to
+# data/user_launch/lumina inside the package).
+#
+# lumina_server starts at login ONLY while the marker file exists. The
+# marker is created when Lumina is enabled (Lumina Mode, `lumina mode lumina`)
+# and removed when returning to stock Haiku, so stock mode leaves zero
+# runtime footprint. `no_safemode` keeps Lumina out of Safe Mode boots.
+
+target desktop {
+	job x-vnd.Lumina-Server {
+		launch @LUMINA_SERVER_PATH@
+		if file_exists ~/config/settings/Lumina/enabled
+		on initial_volumes_mounted
+		no_safemode
+		legacy
+	}
+}

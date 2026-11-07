@@ -1,0 +1,7 @@
+{
+  "displayName": "Haiku Power User",
+  "description": "Keyboard- and rule-driven: a top panel replaces Deskbar, quarter snapping, fast motion, adaptive effects quality.",
+  "author": "Lumina for Haiku",
+  "basedOn": "classic",
+  "schemaVersion": 1
+}

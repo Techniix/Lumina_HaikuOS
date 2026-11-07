@@ -1,0 +1,7 @@
+{
+  "displayName": "Haiku Minimal",
+  "description": "Maximum screen space: Deskbar auto-hides, no panels, no effects; drag a window to the top edge to fill the screen.",
+  "author": "Lumina for Haiku",
+  "basedOn": "classic",
+  "schemaVersion": 1
+}

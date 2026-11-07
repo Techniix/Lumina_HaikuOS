@@ -1,0 +1,14 @@
+resource app_signature "application/x-vnd.Lumina-CLI";
+
+resource app_flags B_MULTIPLE_LAUNCH | B_BACKGROUND_APP;
+
+resource app_version {
+	major  = 0,
+	middle = 1,
+	minor  = 0,
+	variety = B_APPV_DEVELOPMENT,
+	internal = 0,
+	short_info = "Lumina command-line tool",
+	long_info = "Lumina command-line tool — part of Lumina for Haiku"
+};
+

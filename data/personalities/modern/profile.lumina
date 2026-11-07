@@ -1,0 +1,7 @@
+{
+  "displayName": "Haiku Modern",
+  "description": "A refined evolution: edge snapping with smooth spring motion, a frosted-glass dock and an auto-hiding Deskbar.",
+  "author": "Lumina for Haiku",
+  "basedOn": "classic",
+  "schemaVersion": 1
+}

@@ -1,0 +1,16 @@
+{
+  "windows": {
+    "engine": { "enabled": true },
+    "decorator": { "style": "haiku" },
+    "snap": { "enabled": true, "edgeThreshold": 1, "layout": "halves+quarters" },
+    "animation": {
+      "enabled": true,
+      "curve": "ease-out-quint",
+      "durationMs": 120,
+      "resizeMode": "final",
+      "maxFps": 60
+    },
+    // Add your own rules; see docs/config-reference.md#window-rules.
+    "rules": []
+  }
+}

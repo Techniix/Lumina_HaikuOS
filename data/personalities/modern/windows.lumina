@@ -1,0 +1,16 @@
+{
+  "windows": {
+    "engine": { "enabled": true },
+    "decorator": { "style": "haiku" },
+    "snap": { "enabled": true, "edgeThreshold": 2, "layout": "halves+quarters" },
+    "animation": {
+      "enabled": true,
+      "curve": "spring",
+      "spring": { "stiffness": 520, "damping": 0.9 },
+      "durationMs": 200,
+      "resizeMode": "throttled",
+      "maxFps": 60
+    },
+    "rules": []
+  }
+}

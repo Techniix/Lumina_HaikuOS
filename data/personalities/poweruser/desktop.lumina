@@ -1,0 +1,15 @@
+{
+  "deskbar": { "mode": "hidden" },
+  "panels": [
+    {
+      "edge": "top",
+      "thickness": 24,
+      "style": "system",
+      "reserveSpace": true,
+      "spacing": 2,
+      "clockFormat": "%a %d %b  %H:%M",
+      "applets": ["launcher", "workspaces", "windows:nogroups", "showdesktop", "clock"]
+    }
+  ],
+  "fx": { "quality": "auto", "frameBudgetMs": 3, "panelGlass": { "mode": "solid" } }
+}

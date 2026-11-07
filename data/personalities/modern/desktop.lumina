@@ -1,0 +1,22 @@
+{
+  "deskbar": { "mode": "autohide" },
+  "panels": [
+    {
+      "edge": "bottom",
+      "thickness": 34,
+      "lengthPercent": 60,
+      "align": "center",
+      "style": "glass",
+      "reserveSpace": true,
+      "spacing": 4,
+      "applets": ["launcher", "spacer:6", "windows", "workspaces", "clock"]
+    }
+  ],
+  "fx": {
+    "quality": "medium",
+    "frameBudgetMs": 4,
+    "panelGlass": { "mode": "edge", "blurRadius": 14, "tint": "#e8e8e8",
+                    "tintAmount": 0.5, "saturation": 1.25, "refreshHz": 6 },
+    "proxies": { "enabled": false }
+  }
+}

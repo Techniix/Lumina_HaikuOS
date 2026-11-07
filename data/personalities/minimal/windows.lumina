@@ -1,0 +1,9 @@
+{
+  "windows": {
+    "engine": { "enabled": true },
+    "decorator": { "style": "haiku" },
+    "snap": { "enabled": true, "edgeThreshold": 2, "layout": "halves" },
+    "animation": { "enabled": false },
+    "rules": []
+  }
+}

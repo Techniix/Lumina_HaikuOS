@@ -1,0 +1,12 @@
+// Haiku Classic: the Lumina decorator is pixel-identical to Haiku's Default
+// decorator; it only hosts the Window Engine so rules and (opt-in) snapping
+// are available. Nothing animates, nothing moves on its own.
+{
+  "windows": {
+    "engine": { "enabled": true },
+    "decorator": { "style": "haiku" },
+    "snap": { "enabled": false, "edgeThreshold": 2, "layout": "halves+quarters" },
+    "animation": { "enabled": false },
+    "rules": []
+  }
+}

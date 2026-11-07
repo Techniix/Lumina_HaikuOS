@@ -1,0 +1,5 @@
+{
+  "deskbar": { "mode": "keep" },
+  "panels": [],
+  "fx": { "quality": "off", "panelGlass": { "mode": "solid" } }
+}
