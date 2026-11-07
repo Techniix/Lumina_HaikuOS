@@ -75,6 +75,8 @@ struct EngineSettings {
 	std::string	curve = "ease-out-cubic";
 	std::string	resizeMode = "throttled";
 	int32		maxFps = 60;
+	bool		openTransition = false;	// park new windows for a proxy
+	float		parkTimeout = 0.8f;		// seconds before auto-unpark
 	struct Reserved {
 		int32		screen;
 		std::string	edge;
@@ -93,6 +95,8 @@ struct EngineStats {
 	uint64		animationsStarted = 0;
 	uint64		animationsRetargeted = 0;
 	uint64		staleCompletions = 0;
+	uint64		parked = 0;
+	uint64		autoUnparked = 0;
 	bigtime_t	maxTickUsecs = 0;
 	bigtime_t	totalTickUsecs = 0;
 };
@@ -147,6 +151,9 @@ private:
 	void _StartAnimation(Window* window, BRect target, float duration,
 		const char* curveName, const char* resizeMode, double now);
 	void _MoveResize(Window* window, BRect frame);
+	bool _ShouldPark(Window* window);
+	void _Unpark(int32 token, bool automatic);
+	void _UnparkStale(double now);
 
 	void _Push(const char* op, Window* window, bool flag = false,
 		const char* zone = NULL);
@@ -175,6 +182,12 @@ private:
 	anim::Timeline		fTimeline;
 	std::map<int32, anim::GeometryStepper> fSteppers;
 	double				fLastTick;
+
+	struct Parked {
+		BPoint	offset;
+		double	since;
+	};
+	std::map<int32, Parked> fParked;
 
 	std::map<int32, BMessage> fCoalesced;	// latest moved/resized per token
 	bigtime_t			fLastFlush;

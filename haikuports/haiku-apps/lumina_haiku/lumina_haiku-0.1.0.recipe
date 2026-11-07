@@ -1,0 +1,71 @@
+# DRAFT recipe — not yet submitted to HaikuPorts.
+# Open issue: HaikuPorts builds offline, so the app_server sources the
+# Window Engine needs must come in as SOURCE_URI_2 (a tarball of the Haiku
+# tree at the *target* hrev) instead of the git clone below, and the recipe
+# has to be rebuilt for every Haiku revision (see docs/engine.md).
+SUMMARY="A Haiku-native, customizable desktop shell inspired by Lumina"
+DESCRIPTION="Lumina for Haiku extends Haiku's own desktop (app_server, \
+Deskbar, Tracker) with personalities, panels, window rules, snapping and \
+optional visual effects. The default 'Haiku Classic' personality looks \
+exactly like stock Haiku, and stock Haiku is always one switch away."
+HOMEPAGE="https://github.com/Techniix/Lumina_HaikuOS"
+COPYRIGHT="2026 Lumina for Haiku contributors"
+LICENSE="MIT"
+REVISION="1"
+SOURCE_URI="https://github.com/Techniix/Lumina_HaikuOS/archive/v$portVersion.tar.gz"
+CHECKSUM_SHA256="TODO"
+SOURCE_DIR="Lumina_HaikuOS-$portVersion"
+
+ARCHITECTURES="x86_64"
+
+PROVIDES="
+	lumina_haiku = $portVersion
+	app:lumina_server
+	app:LuminaPanel
+	cmd:lumina
+	lib:liblumina = $portVersion
+	"
+# The Window Engine is an app_server add-on built against app_server's
+# internal headers: it must match the exact Haiku revision. The package
+# therefore pins haiku; rebuild on every Haiku update.
+REQUIRES="
+	haiku == $haikuVersion
+	"
+BUILD_REQUIRES="
+	haiku_devel
+	"
+BUILD_PREREQUIRES="
+	cmd:cmake
+	cmd:ninja
+	cmd:gcc
+	cmd:git
+	cmd:rc
+	cmd:xres
+	cmd:mimeset
+	"
+
+BUILD()
+{
+	# app_server headers for the Window Engine (matching revision).
+	HREV="$(uname -v | cut -d' ' -f1)"
+	git clone --filter=blob:none --no-checkout --depth 1 --branch "$HREV" \
+		https://github.com/haiku/haiku haiku-src
+	git -C haiku-src sparse-checkout set --no-cone /headers/ /src/servers/app/
+	git -C haiku-src checkout -q
+	cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$prefix" \
+		-DLUMINA_HAIKU_SOURCE_DIR="$PWD/haiku-src" -DLUMINA_HAIKU_ABI="$HREV" \
+		-DLUMINA_SERVER_PATH="/boot/system/apps/Lumina/lumina_server" \
+		-DLUMINA_BUILD_EXPERIMENTS=OFF
+	cmake --build build
+}
+
+INSTALL()
+{
+	cmake --install build
+}
+
+TEST()
+{
+	cd build && ctest --output-on-failure
+}

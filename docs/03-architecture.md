@@ -1,5 +1,15 @@
 # 03 — Proposed Architecture: Lumina for Haiku
 
+> **Implementation notes (2026-11).** Where the code deviates from this
+> original design, the code and these documents win:
+> * The Window Engine owns **no threads** and is clocked by lumina_server;
+>   commands use the public `BWindow::Set/GetDecoratorSettings()` path
+>   instead of `AS_TALK_TO_DESKTOP_LISTENER` → [engine.md](engine.md).
+> * Panel "transparency" is frosted glass from captured or adjacent pixels,
+>   and transitions are snapshot proxies → [vfx.md](vfx.md).
+> * The emergency chord is an always-on input filter (no setting).
+> * Current state of every component → [status.md](status.md).
+
 ## 1. Design principles
 
 1. **Haiku first.** app_server draws and manages every window. Deskbar, Tracker and the preflets keep working. Lumina *adds to* and *orchestrates* existing system mechanisms rather than replacing them.

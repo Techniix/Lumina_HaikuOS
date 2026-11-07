@@ -28,9 +28,6 @@ const char* kBuiltinSchemaJson = R"LUMINA_SCHEMA(
       "description": "Crashes within the window that trigger fallback to stock." },
     { "path": "session.watchdog.windowSeconds", "type": "int", "default": 60,
       "min": 5, "max": 3600, "group": "Session" },
-    { "path": "session.emergencyChord", "type": "bool", "default": true,
-      "group": "Session",
-      "description": "Ctrl+Alt+Shift+Backspace restores stock Haiku." },
 
     // ---- deskbar / tracker --------------------------------------------
     { "path": "deskbar.mode", "type": "enum",
@@ -43,8 +40,9 @@ const char* kBuiltinSchemaJson = R"LUMINA_SCHEMA(
       "group": "Windows",
       "description": "Select the Lumina decorator add-on (looks identical to Default)." },
     { "path": "windows.decorator.style", "type": "enum",
-      "values": ["haiku", "modern", "compact"], "default": "haiku",
-      "group": "Windows", "risky": true },
+      "values": ["haiku"], "default": "haiku",
+      "group": "Windows", "risky": true,
+      "description": "Only 'haiku' (pixel-identical to Default) exists so far; parametric styles are on the roadmap." },
     { "path": "windows.snap.enabled", "type": "bool", "default": false,
       "group": "Windows" },
     { "path": "windows.snap.edgeThreshold", "type": "int", "default": 2,
@@ -105,6 +103,9 @@ const char* kBuiltinSchemaJson = R"LUMINA_SCHEMA(
       "group": "Effects/Transitions" },
     { "path": "fx.proxies.durationMs", "type": "int", "default": 220,
       "min": 0, "max": 2000, "group": "Effects/Transitions" },
+    { "path": "fx.proxies.restore", "type": "bool", "default": true,
+      "group": "Effects/Transitions",
+      "description": "Restore from the panel with the cached window image." },
 
     // ---- panels --------------------------------------------------------
     { "path": "panels", "type": "array", "default": [], "group": "Panels" },

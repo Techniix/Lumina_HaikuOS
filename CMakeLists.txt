@@ -45,6 +45,7 @@ if(LUMINA_BUILD_HAIKU)
 	add_subdirectory(src/cli)
 	add_subdirectory(src/panel)
 	add_subdirectory(src/mode)
+	add_subdirectory(src/input)
 endif()
 
 if(LUMINA_BUILD_ENGINE)

@@ -39,6 +39,7 @@ namespace haiku { class EngineLink; }
 namespace server {
 
 class EngineClock;
+class EffectsController;
 
 class ServerApp : public BApplication {
 public:
@@ -104,6 +105,7 @@ private:
 
 	haiku::EngineLink*	fEngine;
 	EngineClock*		fClock;
+	EffectsController*	fEffects;
 	bool				fEngineLive;
 	BString				fEngineReason;
 

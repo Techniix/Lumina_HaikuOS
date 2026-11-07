@@ -583,9 +583,6 @@ ProfileStore::Import(const std::string& bundleText,
 			it != report.needsApproval.rend(); ++it) {
 		config.ErasePath(*it);
 	}
-	Value pending = Value::MakeArray();
-	for (const std::string& path : report.needsApproval)
-		pending.Push(path);
 	if (!report.needsApproval.empty()) {
 		info.description += info.description.empty() ? "" : " ";
 		info.description += "(imported; script entries awaiting approval)";

@@ -24,7 +24,9 @@ Applet::Applet(const char* name, const AppletContext& context, uint32 flags)
 	BView(name, flags),
 	fContext(context)
 {
-	SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+	// Applets paint the shared panel skin themselves (DrawPanelBackground);
+	// app_server must not pre-fill them with a view colour.
+	SetViewColor(B_TRANSPARENT_COLOR);
 }
 
 

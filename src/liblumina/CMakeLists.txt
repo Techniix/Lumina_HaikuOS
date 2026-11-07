@@ -10,6 +10,7 @@ set(LIBLUMINA_SOURCES
 	lumina/haiku/SystemAppearance.cpp
 	lumina/haiku/OSInterface.cpp
 	lumina/haiku/ModeControl.cpp
+	lumina/haiku/VisualEffects.cpp
 )
 
 if(LUMINA_COMPILE_CHECK_ONLY)

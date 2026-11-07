@@ -21,6 +21,33 @@ namespace panel {
 
 namespace {
 
+// Full-size root: paints the skin across the whole panel (including layout
+// gaps) so no white BWindow top-view colour ever shows through.
+class PanelRootView : public BView {
+public:
+	PanelRootView(BRect frame, const PanelSkin* skin)
+		:
+		BView(frame, "panel root", B_FOLLOW_ALL, B_WILL_DRAW
+			| B_FRAME_EVENTS),
+		fSkin(skin)
+	{
+		SetViewColor(B_TRANSPARENT_COLOR);
+	}
+
+	void Draw(BRect update)
+	{
+		fSkin->DrawBackground(this, update);
+	}
+
+	void FrameResized(float, float)
+	{
+		Invalidate();
+	}
+
+private:
+	const PanelSkin*	fSkin;
+};
+
 std::string
 GetString(const Value& config, const char* key, const char* fallback)
 {
@@ -76,9 +103,24 @@ PanelWindow::PanelWindow(int32 index, const Value& config,
 			| B_NOT_MINIMIZABLE | B_WILL_ACCEPT_FIRST_CLICK
 			| B_ASYNCHRONOUS_CONTROLS, B_ALL_WORKSPACES),
 	fIndex(index),
+	fRoot(NULL),
 	fSkinRunner(NULL)
 {
+	fRoot = new PanelRootView(Bounds(), &fSkin);
+	AddChild(fRoot);
 	ApplyConfig(config, plan);
+}
+
+
+void
+PanelWindow::Show()
+{
+	// True-capture glass: the panel isn't on screen yet, so the pixels at
+	// its frame are exactly what is behind it. Capture before showing:
+	// zero flicker by construction.
+	if (IsHidden() && fSkin.UsesTrueCapture())
+		fSkin.CaptureUnderPanel(Frame());
+	BWindow::Show();
 }
 
 
@@ -146,8 +188,8 @@ void
 PanelWindow::_Layout()
 {
 	// Rebuild the applet views from the configured list.
-	while (BView* old = ChildAt(0)) {
-		RemoveChild(old);
+	while (BView* old = fRoot->ChildAt(0)) {
+		fRoot->RemoveChild(old);
 		delete old;
 	}
 	fApplets.clear();
@@ -160,7 +202,7 @@ PanelWindow::_Layout()
 
 	BGroupLayout* layout = new BGroupLayout(direction,
 		float(GetNumber(fConfig, "spacing", 2)));
-	SetLayout(layout);
+	fRoot->SetLayout(layout);
 	layout->SetInsets(2, 2, 2, 2);
 
 	AppletContext context;
@@ -191,6 +233,7 @@ void
 PanelWindow::_RefreshSkin(bool force)
 {
 	if (fSkin.Update(Frame(), force)) {
+		fRoot->Invalidate();
 		for (Applet* applet : fApplets)
 			applet->Invalidate();
 	}
@@ -219,7 +262,34 @@ PanelWindow::WorkspaceActivated(int32 workspace, bool active)
 	if (!active)
 		return;
 	SetWindows(fWindows);	// window list is per workspace
-	_RefreshSkin(true);		// wallpaper may differ per workspace
+	if (fSkin.UsesTrueCapture())
+		_RecaptureHidden();
+	else
+		_RefreshSkin(true);	// wallpaper may differ per workspace
+}
+
+
+void
+PanelWindow::_RecaptureHidden()
+{
+	// The whole screen is repainting for the workspace switch right now, so
+	// briefly hiding the panel to sample the true pixels behind it is not
+	// perceptible as flicker. Bounded: at most ~80 ms hidden.
+	Hide();
+	Sync();
+	BRect frame = Frame();
+	bigtime_t deadline = system_time() + 80000;
+	snooze(16000);
+	while (system_time() < deadline && fSkin.CaptureUnderPanel(frame)) {
+		// One more frame for slow clients; captured image is kept.
+		snooze(16000);
+		if (system_time() + 16000 >= deadline)
+			break;
+	}
+	Show();
+	fRoot->Invalidate();
+	for (Applet* applet : fApplets)
+		applet->Invalidate();
 }
 
 

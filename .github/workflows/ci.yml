@@ -1,0 +1,21 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - run: cmake -S . -B build -G Ninja -DLUMINA_WERROR=ON
+      - run: cmake --build build
+      - run: cd build && ctest --output-on-failure
+      - name: config reference is up to date
+        run: ./build/tests/schema_doc > /tmp/ref.md && diff -u docs/config-reference.md /tmp/ref.md
+  haiku-compile-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build clang libfreetype-dev
+      - run: tools/setup-haiku-check-sysroot.sh "$HOME/haiku-check"
+      - run: cmake -S . -B build-check -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/HaikuCompileCheck.toolchain.cmake -DHAIKU_CHECK_ROOT=$HOME/haiku-check -DLUMINA_WERROR=ON
+      - run: cmake --build build-check

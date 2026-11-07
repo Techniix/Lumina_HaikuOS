@@ -28,6 +28,7 @@
 #include <lumina/haiku/MessageCodec.h>
 #include <lumina/haiku/PrivateApi.h>
 #include <lumina/haiku/Protocol.h>
+#include <lumina/haiku/VisualEffects.h>
 
 #include "Applet.h"
 #include "PanelProtocol.h"
@@ -141,11 +142,13 @@ private:
 		}
 
 		fx::EffectProfile profile = fx::EffectProfile::FromConfig(*fConfig);
-		fx::Capabilities caps;
-		caps.screenReadback = true;	// BScreen::ReadBitmap is always there
-		caps.readbackMsPerMegapixel = -1;	// unknown until measured
-		caps.engineLoaded = EngineLink::IsEngineSelected();
-		fPlan = fx::SelectPlan(profile, caps, fx::Quality::High);
+		// Measure once (≈10 ms) and only if glass could use it.
+		if (!fCapsMeasured && profile.glass != fx::GlassStrategy::Solid) {
+			fCaps = VisualEffects::MeasureCapabilities(
+				EngineLink::IsEngineSelected());
+			fCapsMeasured = true;
+		}
+		fPlan = fx::SelectPlan(profile, fCaps, fx::Quality::High);
 		LUMINA_LOG_INFO("panel", "effects plan: quality=%s glass=%s (%s)",
 			fx::QualityName(fPlan.quality),
 			fx::GlassStrategyName(fPlan.glass), fPlan.reason.c_str());
@@ -222,6 +225,8 @@ private:
 	std::unique_ptr<ConfigStore> fConfig;
 	Value						fPanels;
 	fx::EffectPlan				fPlan;
+	fx::Capabilities			fCaps;
+	bool						fCapsMeasured = false;
 	std::vector<PanelWindow*>	fWindows;
 	std::vector<WindowSnapshot>	fLast;
 	BMessageRunner*				fPollRunner;

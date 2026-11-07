@@ -19,3 +19,6 @@ add_test(NAME personalities
 	COMMAND lumina_core_tests personalities)
 set_tests_properties(personalities PROPERTIES
 	ENVIRONMENT "LUMINA_DATA_DIR=${PROJECT_SOURCE_DIR}/data")
+
+add_executable(schema_doc ${PROJECT_SOURCE_DIR}/tools/schema_doc.cpp)
+target_link_libraries(schema_doc PRIVATE lumina_core)

@@ -117,28 +117,38 @@ ScaleBilinear(const ImageView& src, const ImageView& dst)
 {
 	if (!src.IsValid() || !dst.IsValid())
 		return;
+	// Column sample positions and weights are the same for every row:
+	// precompute them once (fixed point, 8-bit weights).
+	std::vector<int> x0(size_t(dst.width)), x1(size_t(dst.width)),
+		wx(size_t(dst.width));
 	double sx = double(src.width) / dst.width;
+	for (int x = 0; x < dst.width; x++) {
+		double fx = (x + 0.5) * sx - 0.5;
+		int base = int(std::floor(fx));
+		int weight = int((fx - std::floor(fx)) * 256);
+		if (fx < 0) {
+			base = 0;
+			weight = 0;
+		}
+		base = std::clamp(base, 0, src.width - 1);
+		x0[size_t(x)] = base * 4;
+		x1[size_t(x)] = std::min(base + 1, src.width - 1) * 4;
+		wx[size_t(x)] = weight;
+	}
 	double sy = double(src.height) / dst.height;
 	for (int y = 0; y < dst.height; y++) {
 		double fy = (y + 0.5) * sy - 0.5;
 		int y0 = std::clamp(int(std::floor(fy)), 0, src.height - 1);
 		int y1 = std::min(y0 + 1, src.height - 1);
-		int wy = int((fy - std::floor(fy)) * 256);
-		if (fy < 0)
-			wy = 0;
+		int wy = fy < 0 ? 0 : int((fy - std::floor(fy)) * 256);
 		const uint8_t* r0 = src.Row(y0);
 		const uint8_t* r1 = src.Row(y1);
 		uint8_t* out = dst.Row(y);
 		for (int x = 0; x < dst.width; x++) {
-			double fx = (x + 0.5) * sx - 0.5;
-			int x0 = std::clamp(int(std::floor(fx)), 0, src.width - 1);
-			int x1 = std::min(x0 + 1, src.width - 1);
-			int wx = int((fx - std::floor(fx)) * 256);
-			if (fx < 0)
-				wx = 0;
+			int a = x0[size_t(x)], b = x1[size_t(x)], w = wx[size_t(x)];
 			for (int c = 0; c < 4; c++) {
-				int top = r0[x0 * 4 + c] * (256 - wx) + r0[x1 * 4 + c] * wx;
-				int bottom = r1[x0 * 4 + c] * (256 - wx) + r1[x1 * 4 + c] * wx;
+				int top = r0[a + c] * (256 - w) + r0[b + c] * w;
+				int bottom = r1[a + c] * (256 - w) + r1[b + c] * w;
 				out[x * 4 + c] = uint8_t((top * (256 - wy) + bottom * wy
 					+ (1 << 15)) >> 16);
 			}

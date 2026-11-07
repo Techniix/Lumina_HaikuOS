@@ -31,6 +31,7 @@ public:
 	virtual void ScreenChanged(BRect frame, color_space mode);
 	virtual void WorkspaceActivated(int32 workspace, bool active);
 	virtual bool QuitRequested();
+	virtual void Show();
 
 	void SetWindows(const std::vector<haiku::WindowSnapshot>& windows);
 	void ApplyConfig(const Value& config, const fx::EffectPlan& plan);
@@ -39,6 +40,7 @@ public:
 
 private:
 	void _Layout();
+	void _RecaptureHidden();
 	void _RefreshSkin(bool force);
 	void _Reserve(bool reserve);
 
@@ -46,6 +48,7 @@ private:
 	Value				fConfig;
 	fx::EffectPlan		fPlan;
 	PanelSkin			fSkin;
+	BView*				fRoot;
 	std::vector<Applet*> fApplets;
 	BMessageRunner*		fSkinRunner;
 	std::vector<haiku::WindowSnapshot> fWindows;

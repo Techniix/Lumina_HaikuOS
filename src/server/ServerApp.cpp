@@ -32,6 +32,7 @@
 #include <lumina/haiku/Protocol.h>
 #include <lumina/haiku/SystemAppearance.h>
 
+#include "EffectsController.h"
 #include "EngineClock.h"
 
 using namespace lumina::haiku;
@@ -66,6 +67,7 @@ ServerApp::ServerApp()
 	fProfiles(Paths::PersonalityDirs(), Paths::UserProfilesDir()),
 	fEngine(NULL),
 	fClock(NULL),
+	fEffects(NULL),
 	fEngineLive(false),
 	fPollRunner(NULL),
 	fRevertRunner(NULL),
@@ -86,6 +88,7 @@ ServerApp::~ServerApp()
 	if (fClock != NULL)
 		fClock->Stop();
 	delete fClock;
+	delete fEffects;
 	delete fEngine;
 }
 
@@ -124,6 +127,7 @@ ServerApp::ReadyToRun()
 	fEngine = new EngineLink();
 	fClock = new EngineClock(fEngine);
 	fClock->Start();
+	fEffects = new EffectsController(fEngine);
 
 	be_roster->StartWatching(BMessenger(this), B_REQUEST_QUIT);
 
@@ -291,7 +295,7 @@ ServerApp::_OnConfigChanged(const std::vector<std::string>& paths)
 	if (_Touches(paths, "windows.engine"))
 		_ApplyEngineSelection();
 	if (_Touches(paths, "windows.") || _Touches(paths, "fx."))
-		_ConfigureEngine();
+		_ConfigureEngine();	// also refreshes the effects plan
 	if (_Touches(paths, "deskbar."))
 		_ApplyDeskbarPolicy();
 	if (_Touches(paths, "panels"))
@@ -349,6 +353,7 @@ ServerApp::_EnterLumina(const std::string& personality, BString* error)
 
 	// 3. Apply.
 	_ApplyEngineSelection();
+	fEffects->Update(fConfig, fEngineLive, true);
 	_ConfigureEngine();
 	_ApplyDeskbarPolicy();
 	_SyncPanels();
@@ -472,13 +477,13 @@ ServerApp::_ProbeEngine()
 void
 ServerApp::_ConfigureEngine()
 {
+	// The effects plan is needed with or without the engine (proxies and
+	// glass don't depend on it).
+	fEffects->Update(fConfig, fEngineLive);
 	if (!fEngineLive)
 		return;
 	fx::EffectProfile profile = fx::EffectProfile::FromConfig(fConfig);
-	fx::Capabilities caps;
-	caps.engineLoaded = true;
-	caps.engineAnimation = true;
-	fx::EffectPlan plan = fx::SelectPlan(profile, caps, fx::Quality::High);
+	fx::EffectPlan plan = fEffects->Plan();
 
 	Value config = Value::MakeObject();
 	Value& snap = config["snap"];
@@ -492,6 +497,7 @@ ServerApp::_ConfigureEngine()
 	animation["curve"] = profile.curve.ToString();
 	animation["resizeMode"] = plan.resizeMode;
 	animation["maxFps"] = plan.maxFps;
+	animation["openTransition"] = fEffects->WantsOpenTransitions();
 	Value reserved = Value::MakeArray();
 	for (const auto& entry : fReservations) {
 		Value r = Value::MakeObject();
@@ -656,6 +662,15 @@ ServerApp::_HandleEngineEvent(BMessage* message)
 		fClock->AnimationStarted(token, message->GetInt32("lumina:fps", 60));
 		return;
 	}
+	if (strcmp(op, "parked") == 0) {
+		BRect frame;
+		message->FindRect(LUMINA_EV_FRAME, &frame);
+		fEffects->WindowParked(token, frame,
+			message->GetString(LUMINA_EV_SIG, NULL));
+		return;
+	}
+	if (strcmp(op, LUMINA_EVENT_REMOVED) == 0)
+		fEffects->WindowGone(token);
 	if (strcmp(op, LUMINA_EVENT_ANIM_DONE) == 0)
 		fClock->AnimationFinished(token);
 	if (strcmp(op, LUMINA_EVENT_SNAPPED) == 0) {
@@ -920,6 +935,7 @@ ServerApp::_HandleStatus(BMessage* message)
 	reply.AddUInt64("clock_ticks", fClock->TicksSent());
 	if (!fFallbackReason.IsEmpty())
 		reply.AddString("fallback_reason", fFallbackReason);
+	fEffects->Describe(reply);
 	ReplyStatus(message, B_OK, NULL, &reply);
 }
 
@@ -1034,6 +1050,21 @@ ServerApp::_HandleWindowCommand(BMessage* message)
 {
 	BString op = message->GetString(LUMINA_ENGINE_FIELD_OP, "");
 	int32 token = message->GetInt32(LUMINA_ENGINE_FIELD_TOKEN, -1);
+	BRect anchor;
+	if (message->FindRect(LUMINA_FIELD_ANCHOR, &anchor) == B_OK) {
+		// Panel-initiated minimize/restore: the effects engine decides
+		// whether a proxy transition plays; the action always happens.
+		if (op == LUMINA_OP_MINIMIZE && message->GetBool("lumina:value", true)) {
+			fEffects->Minimize(token, anchor);
+			ReplyStatus(message, B_OK);
+			return;
+		}
+		if (op == LUMINA_OP_ACTIVATE) {
+			fEffects->Restore(token, anchor);
+			ReplyStatus(message, B_OK);
+			return;
+		}
+	}
 	if (!fEngineLive) {
 		// Without the engine only Deskbar-level actions exist.
 		if (op == LUMINA_OP_MINIMIZE) {
@@ -1115,6 +1146,10 @@ ServerApp::MessageReceived(BMessage* message)
 			break;
 		}
 		case LUMINA_PING: ReplyStatus(message, B_OK); break;
+		case LUMINA_WORKSPACE_SWITCH:
+			fEffects->SwitchWorkspace(message->GetInt32("index", -1));
+			ReplyStatus(message, B_OK);
+			break;
 		case LUMINA_ENGINE_EVENT: _HandleEngineEvent(message); break;
 		case kMsgPollWindows: _PollWindows(); break;
 		case kMsgRevertPreview: _HandleRevert(); break;

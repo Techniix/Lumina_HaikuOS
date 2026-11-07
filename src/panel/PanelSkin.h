@@ -50,6 +50,12 @@ public:
 	// true if the bitmap changed (the panel should redraw).
 	bool Update(BRect screenFrame, bool force);
 
+	// "capture" strategy: renders glass from the TRUE pixels at
+	// `screenFrame`. Only valid while the panel does not cover that area
+	// (before Show(), or while hidden during a workspace switch).
+	bool CaptureUnderPanel(BRect screenFrame);
+	bool UsesTrueCapture() const { return fTrueCapture; }
+
 	// Paints the skin region under `view`'s `update` rect.
 	void DrawBackground(BView* view, BRect update) const;
 
@@ -63,6 +69,7 @@ private:
 	BBitmap* _LoadWallpaperFor(BRect screenFrame);
 
 	fx::GlassStrategy	fStrategy;
+	bool				fTrueCapture;
 	fx::GlassParams		fParams;
 	BString				fEdge;
 	BBitmap*			fSkin;		// panel-sized B_RGB32

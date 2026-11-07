@@ -139,6 +139,8 @@ LuminaEngine::ListenerUnregistered()
 	// half-way when the decorator is switched.
 	if (fDesktop != NULL && fTimeline.HasActive())
 		_Tick(1e12);
+	while (fDesktop != NULL && !fParked.empty())
+		_Unpark(fParked.begin()->first, true);
 	fTimeline.CancelAll();
 	fSteppers.clear();
 	fCoalesced.clear();
@@ -428,6 +430,63 @@ LuminaEngine::_FinishStaleAnimations(double now)
 }
 
 
+// #pragma mark - open transitions (parking)
+
+
+bool
+LuminaEngine::_ShouldPark(Window* window)
+{
+	if (!fActive || !fSettings.openTransition || fSubscribers.empty())
+		return false;
+	if (window->Feel() != B_NORMAL_WINDOW_FEEL)
+		return false;
+	if (window->Look() != B_TITLED_WINDOW_LOOK
+		&& window->Look() != B_DOCUMENT_WINDOW_LOOK)
+		return false;
+	if (window->ServerWindow() == NULL || window->ServerWindow()->App() == NULL)
+		return false;
+	BString signature(window->ServerWindow()->App()->Signature());
+	signature.ToLower();
+	// Never park the desktop shell itself.
+	return !signature.StartsWith("application/x-vnd.lumina-")
+		&& signature != "application/x-vnd.be-trak"
+		&& signature != "application/x-vnd.be-tskb";
+}
+
+
+void
+LuminaEngine::_Unpark(int32 token, bool automatic)
+{
+	auto it = fParked.find(token);
+	if (it == fParked.end())
+		return;
+	BPoint offset = it->second.offset;
+	fParked.erase(it);
+	Window* window = _FindWindow(token);
+	if (window == NULL)
+		return;
+	fDesktop->MoveWindowBy(window, -offset.x, -offset.y);
+	if (automatic)
+		fStats.autoUnparked++;
+	_Push("unparked", window, automatic);
+}
+
+
+void
+LuminaEngine::_UnparkStale(double now)
+{
+	if (fParked.empty())
+		return;
+	std::vector<int32> stale;
+	for (const auto& entry : fParked) {
+		if (now - entry.second.since > fSettings.parkTimeout)
+			stale.push_back(entry.first);
+	}
+	for (int32 token : stale)
+		_Unpark(token, true);
+}
+
+
 // #pragma mark - commands
 
 
@@ -460,6 +519,10 @@ LuminaEngine::_ApplyConfiguration(const char* json)
 			fSettings.resizeMode = v->AsString("throttled");
 		if (const Value* v = animation->Find("maxFps"))
 			fSettings.maxFps = int32(v->AsInt(60));
+		if (const Value* v = animation->Find("openTransition"))
+			fSettings.openTransition = v->AsBool();
+		if (const Value* v = animation->Find("parkTimeout"))
+			fSettings.parkTimeout = float(v->AsNumber(0.8));
 	}
 	if (const Value* reserved = doc.Find("reserved")) {
 		fSettings.reserved.clear();
@@ -515,7 +578,12 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 
 	if (op == "tick") {
 		_Tick(now);
+		_UnparkStale(now);
 		_FlushCoalesced(true);
+		return;
+	}
+	if (op == "unpark") {
+		_Unpark(command.GetInt32(LUMINA_ENGINE_FIELD_TOKEN, 0), false);
 		return;
 	}
 	if (op == LUMINA_OP_LIST) {
@@ -573,6 +641,21 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 void
 LuminaEngine::WindowAdded(Window* window)
 {
+	_UnparkStale(_Now());
+	if (_ShouldPark(window)) {
+		// The window is still hidden (BWindow shows itself later), so moving
+		// it off-screen now can't flash. Its intended frame is reported so a
+		// user-space proxy can animate into it; "unpark" (or the timeout)
+		// moves it back.
+		BRect frame = window->Frame();
+		const ::VirtualScreen& screens = fDesktop->VirtualScreen();
+		BPoint offset(screens.Frame().Width() * 2 + frame.Width() + 64, 0);
+		_Push("parked", window);	// carries the intended frame
+		fDesktop->MoveWindowBy(window, offset.x, offset.y);
+		fParked[_TokenOf(window)] = Parked{offset, _Now()};
+		fStats.parked++;
+		return;
+	}
 	_Push(LUMINA_EVENT_ADDED, window);
 }
 
@@ -584,6 +667,7 @@ LuminaEngine::WindowRemoved(Window* window)
 	fTimeline.Cancel(token);
 	fSteppers.erase(token);
 	fCoalesced.erase(token);
+	fParked.erase(token);
 	if (fDragToken == token)
 		fDragToken = -1;
 	_Push(LUMINA_EVENT_REMOVED, window);
@@ -609,6 +693,7 @@ LuminaEngine::MouseDown(Window* window, BMessage* message, const BPoint& where)
 {
 	double now = _Now();
 	_FinishStaleAnimations(now);
+	_UnparkStale(now);
 	int32 token = _TokenOf(window);
 	fDragToken = token;
 	fDragMoved = false;
@@ -664,6 +749,13 @@ LuminaEngine::MouseUp(Window* window, BMessage* message, const BPoint& where)
 void
 LuminaEngine::MouseMoved(Window* window, BMessage* message, const BPoint& where)
 {
+	// Mouse movement is the most frequent hook: use it as a watchdog so a
+	// parked window or a stalled animation can never get stuck.
+	if (!fParked.empty() || fTimeline.HasActive()) {
+		double now = _Now();
+		_UnparkStale(now);
+		_FinishStaleAnimations(now);
+	}
 	_FlushCoalesced(false);
 }
 
@@ -783,11 +875,13 @@ LuminaEngine::_StatsJson() const
 		",\"animationsStarted\":%" B_PRIu64 ",\"animationsRetargeted\":%"
 		B_PRIu64 ",\"staleCompletions\":%" B_PRIu64
 		",\"avgTickUsecs\":%.1f,\"maxTickUsecs\":%" B_PRId64
+		",\"parked\":%" B_PRIu64 ",\"autoUnparked\":%" B_PRIu64
 		",\"subscribers\":%d,\"snapEnabled\":%s,\"animate\":%s}",
 		fStats.commands, fStats.ticks, fStats.framesApplied, fStats.eventsSent,
 		fStats.eventsDropped, fStats.snaps, fStats.animationsStarted,
 		fStats.animationsRetargeted, fStats.staleCompletions, avg,
-		fStats.maxTickUsecs, int(fSubscribers.size()),
+		fStats.maxTickUsecs, fStats.parked, fStats.autoUnparked,
+		int(fSubscribers.size()),
 		fSettings.snapEnabled ? "true" : "false",
 		fSettings.animate ? "true" : "false");
 	return json;

@@ -54,6 +54,7 @@ enum {
 	LUMINA_RESERVE_AREA		= 'Lres',	// "owner", "screen", "edge",
 										// "thickness" (0 = release)
 	LUMINA_RESTORE_STOCK	= 'Lrst',	// emergency: restore stock Haiku
+	LUMINA_WORKSPACE_SWITCH	= 'Lwsw',	// "index" (with transition if enabled)
 	LUMINA_PING				= 'Lpng',
 
 	// server → subscribers
@@ -104,6 +105,7 @@ const int32 kEngineProtocolVersion = 1;
 #define LUMINA_ENGINE_FIELD_TARGET		"lumina:target"		// BMessenger
 #define LUMINA_ENGINE_FIELD_WORKSPACE	"lumina:workspace"
 #define LUMINA_ENGINE_FIELD_JSON		"lumina:json"
+#define LUMINA_FIELD_ANCHOR			"lumina:anchor"	// BRect: effect origin/target
 
 // GetDecoratorSettings() status fields
 #define LUMINA_ENGINE_STATUS_PRESENT	"lumina:engine"		// bool

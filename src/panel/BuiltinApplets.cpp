@@ -26,8 +26,10 @@
 #include <Path.h>
 #include <PopUpMenu.h>
 #include <Roster.h>
+#include <Messenger.h>
 #include <Window.h>
 
+#include <lumina/haiku/LuminaClient.h>
 #include <lumina/haiku/Protocol.h>
 
 #include "PanelProtocol.h"
@@ -305,19 +307,17 @@ public:
 		for (const Item& item : fItems) {
 			if (!item.rect.Contains(where))
 				continue;
-			int32 buttons = 0;
-			Window()->CurrentMessage()->FindInt32("buttons", &buttons);
 			bool front = _IsFrontTeam(item.window.team);
-			if (fGrouped) {
+			BRect anchor = ConvertToScreen(item.rect);
+			if (fGrouped && item.count > 1) {
+				// Whole-team actions have no single window to animate.
 				if (front && !item.allMinimized)
 					PrivateApi::MinimizeTeam(item.window.team);
 				else
 					PrivateApi::BringTeamToFront(item.window.team);
 			} else {
-				if (front && !item.window.minimized)
-					PrivateApi::MinimizeWindow(item.window.token, true);
-				else
-					PrivateApi::BringToFront(item.window.token);
+				bool minimize = front && !item.window.minimized;
+				_WindowAction(item.window.token, minimize, anchor);
 			}
 			return;
 		}
@@ -330,6 +330,25 @@ private:
 		bool			allMinimized = false;
 		BRect			rect;
 	};
+
+	// Ask lumina_server so the effects engine can play a transition (proxy
+	// zoom to/from this button); fall back to the direct call.
+	void _WindowAction(int32 token, bool minimize, BRect anchor)
+	{
+		haiku::LuminaClient client(300000);
+		BMessage command;
+		command.AddString(LUMINA_ENGINE_FIELD_OP, minimize ? LUMINA_OP_MINIMIZE
+			: LUMINA_OP_ACTIVATE);
+		command.AddInt32(LUMINA_ENGINE_FIELD_TOKEN, token);
+		command.AddBool("lumina:value", minimize);
+		command.AddRect(LUMINA_FIELD_ANCHOR, anchor);
+		if (client.IsServerRunning() && client.WindowCommand(command) == B_OK)
+			return;
+		if (minimize)
+			PrivateApi::MinimizeWindow(token, true);
+		else
+			PrivateApi::BringToFront(token);
+	}
 
 	bool _IsFrontTeam(team_id team)
 	{
@@ -462,7 +481,13 @@ public:
 	{
 		float size = Bounds().Height() - 6;
 		int32 index = int32((where.x - 2) / (size + 2));
-		if (index >= 0 && index < count_workspaces())
+		if (index < 0 || index >= count_workspaces())
+			return;
+		// Through the server so a workspace transition can play.
+		BMessenger server(LUMINA_SERVER_SIGNATURE);
+		BMessage request(haiku::LUMINA_WORKSPACE_SWITCH);
+		request.AddInt32("index", index);
+		if (!server.IsValid() || server.SendMessage(&request) != B_OK)
 			activate_workspace(index);
 	}
 

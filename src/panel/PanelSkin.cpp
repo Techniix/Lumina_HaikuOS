@@ -58,6 +58,7 @@ enum { kAtOffset = 0, kCentered = 1, kScaledToFit = 2, kTiled = 3 };
 PanelSkin::PanelSkin()
 	:
 	fStrategy(fx::GlassStrategy::Solid),
+	fTrueCapture(false),
 	fSkin(NULL),
 	fBand(NULL),
 	fLastRenderMs(0),
@@ -77,10 +78,12 @@ void
 PanelSkin::Configure(fx::GlassStrategy strategy, const fx::GlassParams& params,
 	const BString& edge)
 {
-	// "capture" needs the panel to disappear while sampling; that lives in
-	// experiments/ until it proves flicker-free (docs/vfx.md). Panels use
-	// the nearest flicker-free strategy instead.
-	if (strategy == fx::GlassStrategy::Capture)
+	// "capture" = true pixels captured whenever the panel isn't covering
+	// them (before it is shown, during workspace switches), refreshed from
+	// the adjacent band in between (edge). Never hides a visible panel just
+	// to sample (that flickers; measured in experiments/fx-capture-glass).
+	fTrueCapture = strategy == fx::GlassStrategy::Capture;
+	if (fTrueCapture)
 		strategy = fx::GlassStrategy::Edge;
 	fStrategy = strategy;
 	fParams = params;
@@ -270,6 +273,16 @@ PanelSkin::_UpdateEdge(BRect screenFrame, bool force)
 	fLastCaptureMs = NowMs() - start;
 
 	fx::ImageView current = ViewOf(fBand);
+	if (fTrueCapture && fPreviousBand.Width() == 0 && fSkin != NULL) {
+		// First band after a true capture: keep the true pixels, remember
+		// the surroundings as the reference.
+		fPreviousBand.Resize(current.width, current.height);
+		fx::Copy(current, fPreviousBand.View());
+		return false;
+	}
+	if (fTrueCapture && !force && fPreviousBand.Width() == current.width
+		&& fx::SampledDifference(fPreviousBand.View(), current) < 6.0)
+		return false;	// small changes: true capture still the better image
 	if (!force && fPreviousBand.Width() == current.width
 		&& fPreviousBand.Height() == current.height
 		&& fx::SampledDifference(fPreviousBand.View(), current) < 0.75)
@@ -281,6 +294,31 @@ PanelSkin::_UpdateEdge(BRect screenFrame, bool force)
 		screenFrame.IntegerHeight() + 1);
 	fx::SynthesizeFromEdgeBand(current, edge, fSource.View());
 	_Render(fSource.View());
+	return true;
+}
+
+
+bool
+PanelSkin::CaptureUnderPanel(BRect screenFrame)
+{
+	fFrame = screenFrame;
+	BScreen screen;
+	BRect rect = screenFrame & screen.Frame();
+	if (!rect.IsValid())
+		return false;
+	BBitmap capture(BRect(0, 0, rect.IntegerWidth(), rect.IntegerHeight()),
+		B_RGB32);
+	double start = NowMs();
+	if (screen.ReadBitmap(&capture, false, &rect) != B_OK)
+		return false;
+	fLastCaptureMs = NowMs() - start;
+	fx::ImageView view = ViewOf(&capture);
+	fSource.Resize(view.width, view.height);
+	fx::Copy(view, fSource.View());
+	_Render(fSource.View());
+	// The band snapshot taken now is the reference for "did the
+	// surroundings change enough to re-synthesize from the edge".
+	fPreviousBand.Resize(0, 0);
 	return true;
 }
 
