@@ -104,9 +104,8 @@ client `Draw()`/`FrameResized()` counts per resize mode.
 production paths (off by default, on in Modern/Power User). Timeline cost:
 0.006 ms per tick for 64 simultaneously springing windows (host).
 
-Limits: windows in a Stack & Tile group are moved as a stack by app_server,
-but S&T is not notified during engine moves (notifications are suppressed
-inside our hook); keep tiling and S&T groups apart for now.
+Limits: S&T is not notified during engine moves (notifications are
+suppressed inside our hook), so stacked windows are skipped entirely.
 
 ### D. Snapshot proxies — `experiments/fx-snapshot-proxy`
 

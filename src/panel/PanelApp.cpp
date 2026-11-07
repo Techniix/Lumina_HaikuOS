@@ -16,6 +16,7 @@
 #include <Roster.h>
 
 #include <algorithm>
+#include <strings.h>
 #include <memory>
 #include <vector>
 
@@ -26,6 +27,7 @@
 #include <lumina/haiku/HaikuLog.h>
 #include <lumina/haiku/LuminaClient.h>
 #include <lumina/haiku/MessageCodec.h>
+#include <lumina/haiku/ModeControl.h>
 #include <lumina/haiku/PrivateApi.h>
 #include <lumina/haiku/Protocol.h>
 #include <lumina/haiku/VisualEffects.h>
@@ -65,6 +67,7 @@ public:
 		fPollRunner = new BMessageRunner(BMessenger(this),
 			new BMessage(kMsgPollWindows), 1000000);
 		_PollWindows(true);
+		be_roster->StartWatching(BMessenger(this), B_REQUEST_QUIT);
 	}
 
 	void MessageReceived(BMessage* message)
@@ -103,6 +106,21 @@ public:
 					_LoadConfig();
 					_CreatePanels();
 				}
+				break;
+			}
+			case B_SOME_APP_QUIT:
+			{
+				// lumina_server gone (crash or kill) while Deskbar was hidden:
+				// the user must never be left without Deskbar *and* without a
+				// healthy session. Bring Deskbar back; the panel keeps running.
+				const char* signature = NULL;
+				if (message->FindString("be:signature", &signature) == B_OK
+					&& strcasecmp(signature, LUMINA_SERVER_SIGNATURE) == 0
+					&& !ModeControl::IsDeskbarRunning()) {
+					LUMINA_LOG_WARN("panel", "server quit; restoring Deskbar");
+					ModeControl::ShowDeskbar();
+				}
+				fServerSubscribed = false;
 				break;
 			}
 			case LUMINA_MODE_CHANGED:

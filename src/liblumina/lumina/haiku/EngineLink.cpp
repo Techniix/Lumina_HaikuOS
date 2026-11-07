@@ -55,7 +55,18 @@ EngineLink::Probe(EngineInfo& info)
 {
 	info = EngineInfo();
 	BMessage settings;
-	status_t status = fWindow->GetDecoratorSettings(&settings);
+	status_t status = B_ERROR;
+	// app_server answers this under the read lock; a concurrent reader's
+	// listener invocation can make one probe miss the listeners
+	// (DesktopObservable's invoke guard is shared). Retry briefly.
+	for (int attempt = 0; attempt < 3; attempt++) {
+		settings.MakeEmpty();
+		status = fWindow->GetDecoratorSettings(&settings);
+		if (status == B_OK && settings.GetBool(LUMINA_ENGINE_STATUS_PRESENT,
+				false))
+			break;
+		snooze(2000);
+	}
 	if (status != B_OK)
 		return status;
 	info.present = settings.GetBool(LUMINA_ENGINE_STATUS_PRESENT, false);
@@ -140,6 +151,14 @@ EngineLink::Cancel(int32 token)
 {
 	BMessage m = Command(LUMINA_OP_CANCEL);
 	m.AddInt32(LUMINA_ENGINE_FIELD_TOKEN, token);
+	return Send(m);
+}
+
+
+status_t
+EngineLink::Finish()
+{
+	BMessage m = Command("finish");
 	return Send(m);
 }
 

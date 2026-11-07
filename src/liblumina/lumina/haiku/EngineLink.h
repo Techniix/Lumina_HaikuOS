@@ -51,6 +51,8 @@ public:
 		const char* curve, const char* resizeMode = "throttled",
 		int32 maxFps = 60);
 	status_t Cancel(int32 token = 0);
+	// Lands every running animation and parked window immediately.
+	status_t Finish();
 	status_t Minimize(int32 token, bool minimize);
 	status_t Activate(int32 token);
 	status_t SetWorkspace(int32 token, int32 workspace);

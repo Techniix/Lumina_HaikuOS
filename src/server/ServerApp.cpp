@@ -31,6 +31,7 @@
 #include <lumina/haiku/PrivateApi.h>
 #include <lumina/haiku/Protocol.h>
 #include <lumina/haiku/SystemAppearance.h>
+#include <lumina/haiku/VisualEffects.h>
 
 #include "EffectsController.h"
 #include "EngineClock.h"
@@ -141,7 +142,8 @@ ServerApp::ReadyToRun()
 		fFallbackReason = crashReason;
 		LUMINA_LOG_ERROR(kLog, "crash loop detected: %s", crashReason.String());
 		BString report;
-		ModeControl::RestoreStockLocally(NULL, &report);
+		std::vector<std::string> failures;
+		ModeControl::RestoreStockLocally(&failures, &report);
 		Notify("Lumina switched back to stock Haiku", crashReason.String(),
 			B_ERROR_NOTIFICATION);
 		_MarkCleanExit();
@@ -178,14 +180,18 @@ ServerApp::QuitRequested()
 	LUMINA_LOG_INFO(kLog, "quit requested");
 	if (fInLumina) {
 		// A normal quit while Lumina is active (logout/shutdown): leave the
-		// session as configured, but make sure Deskbar comes back for the
-		// next login if we were hiding it.
+		// session as configured. Only re-enable the Deskbar job (no busy
+		// wait, no launching during shutdown); the panel restarts Deskbar
+		// itself if the server goes away mid-session.
 		_StopPanel();
 		if (fConfig.GetString("deskbar.mode", "keep") == "hidden")
-			ModeControl::ShowDeskbar();
+			PrivateApi::SetJobEnabled(LUMINA_DESKBAR_JOB, true);
+		if (fEngine != NULL)
+			fEngine->Finish();
 	}
 	if (fClock != NULL)
 		fClock->Stop();
+	VisualEffects::WaitForTransitions();
 	_MarkCleanExit();
 	Logger::Default().Flush();
 	return true;
@@ -375,9 +381,12 @@ ServerApp::_ExitToStock(BString* report, bool quitAfter)
 	if (fClock != NULL)
 		fClock->Stop();
 	if (fEngine != NULL) {
-		fEngine->Cancel(0);
+		// Land animations/parked windows before the decorator switch, so no
+		// window is left half-way or off-screen.
+		fEngine->Finish();
 		fEngine->Unsubscribe(BMessenger(this));
 	}
+	VisualEffects::WaitForTransitions();
 	_StopPanel();
 
 	std::vector<std::string> failures;
@@ -433,6 +442,21 @@ ServerApp::_ApplyEngineSelection()
 			return;
 		}
 		if (!EngineLink::IsEngineSelected()) {
+			// The engine's decorator looks exactly like Default. Replacing
+			// a user's different decorator (Flat, Mac, BeOS…) would change
+			// their visual identity, so only do it when asked to.
+			BString current;
+			PrivateApi::GetDecorator(current);
+			bool isDefault = current.IsEmpty() || current == "Default";
+			if (!isDefault && !fConfig.GetBool(
+					"windows.engine.replaceDecorator", false)) {
+				fEngineLive = false;
+				fEngineReason.SetToFormat("keeping your decorator (%s); set "
+					"windows.engine.replaceDecorator to use the engine",
+					current.String());
+				LUMINA_LOG_INFO(kLog, "%s", fEngineReason.String());
+				return;
+			}
 			status_t status = PrivateApi::SetDecorator(path);
 			LUMINA_LOG_INFO(kLog, "selecting engine decorator %s: %s",
 				path.String(), strerror(status));
@@ -471,6 +495,32 @@ ServerApp::_ProbeEngine()
 	LUMINA_LOG_INFO(kLog, "engine: present=%d active=%d built=%s running=%s %s",
 		info.present, info.active, info.builtAbi.String(),
 		info.runningAbi.String(), info.reason.String());
+}
+
+
+void
+ServerApp::_CheckEngineHealth()
+{
+	// The decorator may have been switched away and back (Appearance), which
+	// creates a *new* engine instance with no subscribers or configuration.
+	EngineInfo info;
+	if (fEngine->Probe(info) != B_OK || !info.present) {
+		if (fEngineLive)
+			LUMINA_LOG_WARN(kLog, "engine disappeared (decorator changed?)");
+		fEngineLive = false;
+		fEngineReason = "engine not loaded";
+		return;
+	}
+	bool orphaned = info.statsJson.FindFirst("\"subscribers\":0") >= 0;
+	if (!fEngineLive || orphaned) {
+		LUMINA_LOG_INFO(kLog, "engine (re)attached: resubscribing");
+		fEngineLive = info.active;
+		fEngineReason = info.reason;
+		if (fEngineLive) {
+			fEngine->Subscribe(BMessenger(this));
+			_ConfigureEngine();
+		}
+	}
 }
 
 
@@ -648,8 +698,14 @@ ServerApp::_BroadcastWindowChange(const WindowChange& change)
 	message.AddString("op", change.op.c_str());
 	WindowRegistry::ArchiveWindow(change.window, message);
 	_Broadcast(LUMINA_TOPIC_WINDOWS, message);
-	if (change.op == "added")
+	// Rules apply when a window first becomes active, not at "added": at
+	// that point it is still hidden (minimize would be ignored) and the app
+	// may still position it itself before Show().
+	if (change.op == "activated" && fRulesApplied.insert(
+			change.window.token).second)
 		_ApplyRules(change.window);
+	if (change.op == "removed")
+		fRulesApplied.erase(change.window.token);
 }
 
 
@@ -688,7 +744,11 @@ ServerApp::_PollWindows()
 	// the engine-less case (and catches anything the engine dropped every
 	// 10 s).
 	static int sCounter = 0;
-	if (fEngineLive && (++sCounter % 10) != 0)
+	sCounter++;
+	if (fInLumina && sCounter % 10 == 0
+		&& fConfig.GetBool("windows.engine.enabled", true))
+		_CheckEngineHealth();
+	if (fEngineLive && (sCounter % 10) != 0)
 		return;
 	std::vector<WindowSnapshot> windows;
 	if (PrivateApi::ListWindows(windows) != B_OK)

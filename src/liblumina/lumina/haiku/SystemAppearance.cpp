@@ -24,6 +24,9 @@ namespace lumina {
 namespace haiku {
 namespace SystemAppearance {
 
+const std::vector<std::string> kManagedItems = {"decorator", "deskbar"};
+
+
 static const color_which kColors[] = {
 	B_PANEL_BACKGROUND_COLOR, B_PANEL_TEXT_COLOR, B_DOCUMENT_BACKGROUND_COLOR,
 	B_DOCUMENT_TEXT_COLOR, B_CONTROL_BACKGROUND_COLOR, B_CONTROL_TEXT_COLOR,
@@ -106,8 +109,18 @@ Capture()
 
 
 status_t
-Restore(const Value& snapshot, std::vector<std::string>* failures)
+Restore(const Value& snapshot, std::vector<std::string>* failures,
+	const std::vector<std::string>* only)
 {
+	auto wanted = [&](const char* item) {
+		if (only == nullptr)
+			return true;
+		for (const std::string& name : *only) {
+			if (name == item)
+				return true;
+		}
+		return false;
+	};
 	auto fail = [&](const char* what) {
 		LUMINA_LOG_WARN("appearance", "restore of %s failed", what);
 		if (failures)
@@ -115,7 +128,7 @@ Restore(const Value& snapshot, std::vector<std::string>* failures)
 	};
 
 	// Deskbar first: the user must always end up with a way to launch apps.
-	if (const Value* deskbar = snapshot.Find("deskbar")) {
+	if (const Value* deskbar = wanted("deskbar") ? snapshot.Find("deskbar") : NULL) {
 		bool wasRunning = deskbar->Find("running")
 			? deskbar->Find("running")->AsBool(true) : true;
 		if (wasRunning) {
@@ -141,7 +154,7 @@ Restore(const Value& snapshot, std::vector<std::string>* failures)
 		}
 	}
 
-	if (const Value* v = snapshot.Find("decorator")) {
+	if (const Value* v = wanted("decorator") ? snapshot.Find("decorator") : NULL) {
 		BString current;
 		PrivateApi::GetDecorator(current);
 		if (current != v->AsString().c_str()
@@ -152,7 +165,7 @@ Restore(const Value& snapshot, std::vector<std::string>* failures)
 				fail("decorator");
 		}
 	}
-	if (const Value* v = snapshot.Find("controlLook")) {
+	if (const Value* v = wanted("controlLook") ? snapshot.Find("controlLook") : NULL) {
 		BString current;
 		PrivateApi::GetControlLook(current);
 		if (current != v->AsString().c_str()
@@ -160,7 +173,7 @@ Restore(const Value& snapshot, std::vector<std::string>* failures)
 			fail("controlLook");
 	}
 
-	if (const Value* colors = snapshot.Find("uiColors")) {
+	if (const Value* colors = wanted("uiColors") ? snapshot.Find("uiColors") : NULL) {
 		BMessage message;
 		for (const Value::Member& m : colors->Members()) {
 			uint8_t r, g, b, a;
@@ -175,14 +188,14 @@ Restore(const Value& snapshot, std::vector<std::string>* failures)
 			set_ui_colors(&message);
 	}
 
-	if (const Value* v = snapshot.Find("mouseMode"))
+	if (const Value* v = wanted("mouseMode") ? snapshot.Find("mouseMode") : NULL)
 		set_mouse_mode(mode_mouse(v->AsInt()));
-	if (const Value* v = snapshot.Find("focusFollowsMouseMode"))
+	if (const Value* v = wanted("focusFollowsMouseMode") ? snapshot.Find("focusFollowsMouseMode") : NULL)
 		set_focus_follows_mouse_mode(mode_focus_follows_mouse(v->AsInt()));
-	if (const Value* v = snapshot.Find("acceptFirstClick"))
+	if (const Value* v = wanted("acceptFirstClick") ? snapshot.Find("acceptFirstClick") : NULL)
 		set_accept_first_click(v->AsBool());
 
-	if (const Value* w = snapshot.Find("workspaces")) {
+	if (const Value* w = wanted("workspaces") ? snapshot.Find("workspaces") : NULL) {
 		uint32 columns = uint32(w->Find("columns")
 			? w->Find("columns")->AsInt() : 0);
 		uint32 rows = uint32(w->Find("rows") ? w->Find("rows")->AsInt() : 0);

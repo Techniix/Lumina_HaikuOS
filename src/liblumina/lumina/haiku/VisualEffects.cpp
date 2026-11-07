@@ -6,9 +6,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 #include <Autolock.h>
 #include <Bitmap.h>
+#include <Locker.h>
 #include <ControlLook.h>
 #include <OS.h>
 #include <Screen.h>
@@ -22,6 +24,19 @@ namespace haiku {
 namespace VisualEffects {
 
 namespace {
+
+BLocker sThreadsLock("lumina transitions");
+std::set<thread_id> sThreads;
+
+void
+TrackThread(thread_id thread, bool add)
+{
+	BAutolock _(sThreadsLock);
+	if (add)
+		sThreads.insert(thread);
+	else
+		sThreads.erase(thread);
+}
 
 double
 NowMs()
@@ -144,7 +159,9 @@ public:
 
 	void SetFrame(BRect frame)
 	{
-		BAutolock _(this);
+		BAutolock locker(this);
+		if (!locker.IsLocked())
+			return;
 		MoveTo(frame.LeftTop());
 		ResizeTo(frame.Width(), frame.Height());
 		fView->Invalidate();
@@ -153,7 +170,9 @@ public:
 
 	void SetSlide(float progress)
 	{
-		BAutolock _(this);
+		BAutolock locker(this);
+		if (!locker.IsLocked())
+			return;
 		fView->fSlide = progress;
 		fView->Invalidate();
 		fView->Sync();
@@ -162,8 +181,9 @@ public:
 	void ShowAndSync()
 	{
 		Show();
-		BAutolock _(this);
-		fView->Sync();
+		BAutolock locker(this);
+		if (locker.IsLocked())
+			fView->Sync();
 	}
 
 	void Close()
@@ -282,6 +302,7 @@ RunProxyTransition(ProxySpec spec)
 		snooze(bigtime_t(s->settleMs * 1000));
 		proxy->Close();
 		delete s;
+		TrackThread(find_thread(NULL), false);
 		return B_OK;
 	}, "lumina proxy", B_DISPLAY_PRIORITY, heap);
 	if (thread < 0) {
@@ -290,6 +311,7 @@ RunProxyTransition(ProxySpec spec)
 		delete heap;
 		return thread;
 	}
+	TrackThread(thread, true);
 	return resume_thread(thread);
 }
 
@@ -316,6 +338,7 @@ RunWorkspaceSlide(SlideSpec spec)
 		snooze(30000);	// let the new workspace finish painting beneath
 		proxy->Close();
 		delete s;
+		TrackThread(find_thread(NULL), false);
 		return B_OK;
 	}, "lumina workspace slide", B_DISPLAY_PRIORITY, heap);
 	if (thread < 0) {
@@ -324,7 +347,23 @@ RunWorkspaceSlide(SlideSpec spec)
 		delete heap;
 		return thread;
 	}
+	TrackThread(thread, true);
 	return resume_thread(thread);
+}
+
+
+void
+WaitForTransitions(bigtime_t timeout)
+{
+	bigtime_t deadline = system_time() + timeout;
+	while (system_time() < deadline) {
+		{
+			BAutolock _(sThreadsLock);
+			if (sThreads.empty())
+				return;
+		}
+		snooze(10000);
+	}
 }
 
 }	// namespace VisualEffects

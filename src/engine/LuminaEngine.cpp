@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/utsname.h>
 #include <syslog.h>
 
@@ -408,6 +409,7 @@ LuminaEngine::_Tick(double now)
 			fStats.framesApplied++;
 		if (frame.finished) {
 			fSteppers.erase(token);
+			_Push(LUMINA_EVENT_MOVED, window);
 			_Push(LUMINA_EVENT_ANIM_DONE, window);
 		}
 	}
@@ -454,18 +456,42 @@ LuminaEngine::_ShouldPark(Window* window)
 }
 
 
+BPoint
+LuminaEngine::_ParkOffset(Window* window)
+{
+	const ::VirtualScreen& screens = fDesktop->VirtualScreen();
+	return BPoint(screens.Frame().Width() * 2 + window->Frame().Width() + 64, 0);
+}
+
+
+bool
+LuminaEngine::_InStack(Window* window)
+{
+	// Windows in a Stack & Tile stack move as a group and S&T isn't told
+	// about moves made inside our hook (notifications are suppressed), so
+	// the engine leaves them alone.
+	WindowStack* stack = window->GetWindowStack();
+	return stack != NULL && stack->CountWindows() > 1;
+}
+
+
 void
 LuminaEngine::_Unpark(int32 token, bool automatic)
 {
 	auto it = fParked.find(token);
 	if (it == fParked.end())
 		return;
-	BPoint offset = it->second.offset;
+	BPoint intended = it->second.intended;
 	fParked.erase(it);
 	Window* window = _FindWindow(token);
 	if (window == NULL)
 		return;
-	fDesktop->MoveWindowBy(window, -offset.x, -offset.y);
+	// Move to the *intended absolute position*, not "back by the offset":
+	// the client may have positioned the window itself meanwhile.
+	BPoint current = window->Frame().LeftTop();
+	if (current != intended)
+		fDesktop->MoveWindowBy(window, intended.x - current.x,
+			intended.y - current.y);
 	if (automatic)
 		fStats.autoUnparked++;
 	_Push("unparked", window, automatic);
@@ -582,6 +608,15 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 		_FlushCoalesced(true);
 		return;
 	}
+	if (op == "finish") {
+		// Land every animation and parked window now (used before
+		// switching back to stock, so nothing is left half-way).
+		_Tick(1e12);
+		while (!fParked.empty())
+			_Unpark(fParked.begin()->first, true);
+		_FlushCoalesced(true);
+		return;
+	}
 	if (op == "unpark") {
 		_Unpark(command.GetInt32(LUMINA_ENGINE_FIELD_TOKEN, 0), false);
 		return;
@@ -589,7 +624,7 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 	if (op == LUMINA_OP_LIST) {
 		for (Window* window = fDesktop->AllWindows().FirstWindow();
 				window != NULL; window = window->NextWindow(kAllWindowList))
-			_Push(LUMINA_EVENT_ADDED, window);
+			_Push(LUMINA_EVENT_ADDED, window, window->IsHidden());
 		return;
 	}
 	int32 token = command.GetInt32(LUMINA_ENGINE_FIELD_TOKEN, 0);
@@ -612,6 +647,8 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 		&& frame.IsValid();
 
 	if (op == LUMINA_OP_ANIMATE && hasFrame) {
+		if (_InStack(window))
+			return;
 		_StartAnimation(window, frame,
 			command.GetFloat(LUMINA_ENGINE_FIELD_DURATION,
 				fSettings.durationSeconds),
@@ -620,17 +657,27 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 			command.GetString(LUMINA_ENGINE_FIELD_RESIZE,
 				fSettings.resizeMode.c_str()), now);
 	} else if (op == LUMINA_OP_MOVE_RESIZE && hasFrame) {
+		if (_InStack(window))
+			return;
 		fTimeline.Cancel(token);
 		fSteppers.erase(token);
 		_MoveResize(window, frame);
+		_Push(LUMINA_EVENT_MOVED, window);
 	} else if (op == LUMINA_OP_MINIMIZE) {
-		fDesktop->MinimizeWindow(window, command.GetBool("lumina:value", true));
+		bool minimize = command.GetBool("lumina:value", true);
+		fDesktop->MinimizeWindow(window, minimize);
+		// Listener notifications are suppressed while our hook runs:
+		// report what we did ourselves.
+		_Push(LUMINA_EVENT_MINIMIZED, window, minimize);
 	} else if (op == LUMINA_OP_ACTIVATE) {
 		fDesktop->ActivateWindow(window);
+		_Push(LUMINA_EVENT_ACTIVATED, window);
 	} else if (op == LUMINA_OP_WORKSPACE) {
 		int32 workspace = command.GetInt32(LUMINA_ENGINE_FIELD_WORKSPACE, -1);
-		if (workspace >= 0 && workspace < 32)
+		if (workspace >= 0 && workspace < 32) {
 			fDesktop->SetWindowWorkspaces(window, 1UL << workspace);
+			_Push(LUMINA_EVENT_WORKSPACES, window);
+		}
 	}
 }
 
@@ -647,16 +694,16 @@ LuminaEngine::WindowAdded(Window* window)
 		// it off-screen now can't flash. Its intended frame is reported so a
 		// user-space proxy can animate into it; "unpark" (or the timeout)
 		// moves it back.
-		BRect frame = window->Frame();
-		const ::VirtualScreen& screens = fDesktop->VirtualScreen();
-		BPoint offset(screens.Frame().Width() * 2 + frame.Width() + 64, 0);
+		BPoint intended = window->Frame().LeftTop();
+		BPoint offset = _ParkOffset(window);
 		_Push("parked", window);	// carries the intended frame
 		fDesktop->MoveWindowBy(window, offset.x, offset.y);
-		fParked[_TokenOf(window)] = Parked{offset, _Now()};
+		fParked[_TokenOf(window)] = Parked{intended,
+			window->Frame().LeftTop(), _Now()};
 		fStats.parked++;
 		return;
 	}
-	_Push(LUMINA_EVENT_ADDED, window);
+	_Push(LUMINA_EVENT_ADDED, window, window->IsHidden());
 }
 
 
@@ -678,6 +725,9 @@ bool
 LuminaEngine::KeyPressed(uint32 what, int32 key, int32 modifiers)
 {
 	// Keyboard tiling bindings arrive in a later milestone; never consume.
+	// Watchdog duty: an app launched from the keyboard must not stay parked.
+	if (!fParked.empty())
+		_UnparkStale(_Now());
 	return false;
 }
 
@@ -716,8 +766,9 @@ LuminaEngine::MouseUp(Window* window, BMessage* message, const BPoint& where)
 	_FlushCoalesced(true);
 	if (!wasDrag || window == NULL || !fActive || !fSettings.snapEnabled)
 		return;
-	// Only normal, movable windows snap.
-	if (!window->IsNormal() || (window->Flags() & B_NOT_MOVABLE) != 0)
+	// Only normal, movable, unstacked windows snap.
+	if (!window->IsNormal() || (window->Flags() & B_NOT_MOVABLE) != 0
+		|| _InStack(window))
 		return;
 
 	BRect screen;
@@ -740,8 +791,10 @@ LuminaEngine::MouseUp(Window* window, BMessage* message, const BPoint& where)
 	if (fSettings.animate) {
 		_StartAnimation(window, content, fSettings.durationSeconds,
 			fSettings.curve.c_str(), fSettings.resizeMode.c_str(), _Now());
-	} else
+	} else {
 		_MoveResize(window, content);
+		_Push(LUMINA_EVENT_MOVED, window);
+	}
 	_Push(LUMINA_EVENT_SNAPPED, window, false, zone.c_str());
 }
 
@@ -763,7 +816,21 @@ LuminaEngine::MouseMoved(Window* window, BMessage* message, const BPoint& where)
 void
 LuminaEngine::WindowMoved(Window* window)
 {
-	if (_TokenOf(window) == fDragToken)
+	int32 token = _TokenOf(window);
+	auto parked = fParked.find(token);
+	if (parked != fParked.end()
+		&& window->Frame().LeftTop() != parked->second.parkedAt) {
+		// The client positioned its (still hidden) window itself, e.g.
+		// CenterOnScreen() before Show(). That is its real intent: remember
+		// it and keep the window parked. (Our own moves inside hooks don't
+		// notify, so this is always the client.)
+		parked->second.intended = window->Frame().LeftTop();
+		BPoint offset = _ParkOffset(window);
+		fDesktop->MoveWindowBy(window, offset.x, offset.y);
+		parked->second.parkedAt = window->Frame().LeftTop();
+		return;
+	}
+	if (token == fDragToken)
 		fDragMoved = true;
 	_Push(LUMINA_EVENT_MOVED, window);
 }
@@ -781,6 +848,8 @@ LuminaEngine::WindowResized(Window* window)
 void
 LuminaEngine::WindowActivated(Window* window)
 {
+	if (!fParked.empty())
+		_UnparkStale(_Now());
 	_Push(LUMINA_EVENT_ACTIVATED, window);
 }
 
@@ -848,9 +917,25 @@ LuminaEngine::SetDecoratorSettings(Window* window, const BMessage& settings)
 }
 
 
+bool
+LuminaEngine::_IsLuminaClient(Window* window) const
+{
+	if (window == NULL || window->ServerWindow() == NULL
+		|| window->ServerWindow()->App() == NULL)
+		return false;
+	return strncasecmp(window->ServerWindow()->App()->Signature(),
+		"application/x-vnd.lumina-", 25) == 0;
+}
+
+
 void
 LuminaEngine::GetDecoratorSettings(Window* window, BMessage& settings)
 {
+	// Deskbar asks for every window's decorator settings when it polls
+	// (Desktop::WriteWindowInfo); keep that path cheap and only build the
+	// full status for Lumina's own clients.
+	if (!_IsLuminaClient(window))
+		return;
 	settings.AddBool(LUMINA_ENGINE_STATUS_PRESENT, true);
 	settings.AddInt32(LUMINA_ENGINE_STATUS_VERSION, kEngineProtocolVersion);
 	settings.AddString(LUMINA_ENGINE_STATUS_ABI, LUMINA_ENGINE_ABI);

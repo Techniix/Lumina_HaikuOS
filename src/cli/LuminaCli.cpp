@@ -43,7 +43,9 @@ const char* kUsage =
 "  status                         mode, personality, engine, Deskbar\n"
 "  mode stock                     return to stock Haiku (restores snapshot)\n"
 "  mode lumina [personality]      enable Lumina (classic|modern|poweruser|minimal|…)\n"
-"  restore-stock                  restore stock Haiku WITHOUT the server\n"
+"  restore-stock [--full]         restore stock Haiku WITHOUT the server\n"
+"                                 (--full also resets colours, mouse, workspaces\n"
+"                                 to the pre-Lumina snapshot)\n"
 "\n"
 "Configuration\n"
 "  get [path]                     print effective value (JSON) and its layer\n"
@@ -501,7 +503,9 @@ main(int argc, char** argv)
 	if (strcmp(command, "restore-stock") == 0) {
 		std::vector<std::string> failures;
 		BString report;
-		status_t status = ModeControl::RestoreStockLocally(&failures, &report);
+		bool full = argc > 2 && strcmp(argv[2], "--full") == 0;
+		status_t status = ModeControl::RestoreStockLocally(&failures, &report,
+			full);
 		printf("%s\n", report.String());
 		for (const std::string& f : failures)
 			printf("  failed: %s\n", f.c_str());

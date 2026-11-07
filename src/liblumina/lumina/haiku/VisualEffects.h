@@ -80,6 +80,10 @@ struct SlideSpec {
 
 status_t RunWorkspaceSlide(SlideSpec spec);
 
+// Waits (bounded) for running transitions to finish. Call before
+// destroying objects their callbacks reference (e.g. at quit).
+void WaitForTransitions(bigtime_t timeout = 2000000);
+
 }	// namespace VisualEffects
 }	// namespace haiku
 }	// namespace lumina

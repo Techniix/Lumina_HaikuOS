@@ -81,7 +81,9 @@ WindowRegistry::ApplyEngineEvent(const BMessage& event)
 			false))
 		w.hidden = true;
 	if (strcmp(op, LUMINA_EVENT_ADDED) == 0)
-		w.hidden = false;
+		w.hidden = event.GetBool(LUMINA_EV_FLAG, false);	// added while hidden
+	if (strcmp(op, LUMINA_EVENT_ACTIVATED) == 0)
+		w.hidden = false;	// there is no "shown" hook; activation implies it
 
 	if (!PrivateApi::IsUserWindow(w)) {
 		if (it != fWindows.end()) {

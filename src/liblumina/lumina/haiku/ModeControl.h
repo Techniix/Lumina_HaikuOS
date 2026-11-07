@@ -40,8 +40,10 @@ bool IsDeskbarRunning();
 // Full, server-independent restore: quits the Lumina panel/server, restores
 // the stock snapshot (or sane defaults if none exists), re-enables Deskbar,
 // removes the login marker and records session.mode = stock.
+// `full` also restores colours, control look, mouse/focus modes and the
+// workspace layout from the snapshot (normally left as the user has them).
 status_t RestoreStockLocally(std::vector<std::string>* failures,
-	BString* report);
+	BString* report, bool full = false);
 
 }	// namespace ModeControl
 }	// namespace haiku

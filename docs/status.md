@@ -66,6 +66,26 @@ haiku: the same suite runs on Haiku via tools/haiku/build.sh
    battery and brightness, volume (Media Kit) is missing.
 7. Deskbar "hidden" mode relies on launch_daemon job `x-vnd.Be-TSKB`
    (`data/launch/user`); verify on the target Haiku.
-8. Stack & Tile is not notified of engine-driven moves.
+8. Stack & Tile is not notified of engine-driven moves; stacked windows
+   are skipped, tiled groups aren't detected yet.
+12. lumina_server is a launch_daemon *job* (not an auto-restarting
+    service): the crash watchdog counts unclean exits across logins, and if
+    the server dies mid-session the panel restarts Deskbar so the user is
+    never left without it.
+13. Window rules apply when a window is first activated (at "added" it is
+    still hidden and the app may still position it).
+
+An independent review of the engine and server against the app_server
+sources (2026-11-07) found 12 issues; all are fixed in the code (parking vs.
+client positioning, suppressed notifications, rule timing, exit landing,
+engine re-attach, quit-time lifetimes, self-messaging, snapshot retirement,
+SATDecorator parity, keyboard-launched parked windows, Deskbar-poll cost).
 9. `fx.proxies.restore` is in the schema but restore transitions are
    always enabled together with `fx.proxies.minimize` for now.
+10. "Restore stock" restores only what Lumina changes (decorator, Deskbar);
+    `lumina restore-stock --full` also resets colours, control look, mouse
+    and workspaces to the pre-Lumina snapshot.
+11. If your decorator isn't Default, Lumina keeps it and runs without the
+    engine (no snapping/animation/rules) unless
+    `windows.engine.replaceDecorator` is set — the engine's decorator only
+    exists in the Default look so far.

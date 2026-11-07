@@ -12,7 +12,8 @@ Haiku's own app_server, Deskbar and Tracker instead of replacing them.
 ## Principles
 
 * **The default is Haiku.** *Haiku Classic* looks exactly like stock Haiku:
-  the engine's decorator *is* app_server's Default decorator.
+  the engine's decorator *is* the one stock Haiku uses (`SATDecorator`), and
+  a different decorator you chose (Flat, Mac, BeOS…) is kept, not replaced.
 * **Native first.** It's built on app_server, the Interface/Storage/App Kits,
   launch_daemon, `BNotification` and Haiku packages, with no X11, Wayland,
   D-Bus or systemd. Qt 6/QML is only planned for the optional Settings Center.

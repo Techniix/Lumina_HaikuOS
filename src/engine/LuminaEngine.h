@@ -152,6 +152,8 @@ private:
 		const char* curveName, const char* resizeMode, double now);
 	void _MoveResize(Window* window, BRect frame);
 	bool _ShouldPark(Window* window);
+	BPoint _ParkOffset(Window* window);
+	bool _InStack(Window* window);
 	void _Unpark(int32 token, bool automatic);
 	void _UnparkStale(double now);
 
@@ -169,6 +171,7 @@ private:
 
 	void _CheckAbi();
 	BString _StatsJson() const;
+	bool _IsLuminaClient(Window* window) const;
 
 	Desktop*			fDesktop;
 	bool				fActive;
@@ -184,7 +187,8 @@ private:
 	double				fLastTick;
 
 	struct Parked {
-		BPoint	offset;
+		BPoint	intended;	// where the window wants to be (LeftTop)
+		BPoint	parkedAt;	// where we put it
 		double	since;
 	};
 	std::map<int32, Parked> fParked;

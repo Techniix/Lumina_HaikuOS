@@ -22,6 +22,7 @@
 #include <String.h>
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,7 @@ private:
 	void _ApplyEngineSelection();
 	void _ConfigureEngine();
 	void _ProbeEngine();
+	void _CheckEngineHealth();
 	void _SyncPanels();
 	void _StopPanel();
 
@@ -101,6 +103,7 @@ private:
 	ConfigStore			fConfig;
 	ProfileStore		fProfiles;
 	RuleSet				fRules;
+	std::set<int32>		fRulesApplied;
 	std::string			fLastUserText;	// to ignore our own file writes
 
 	haiku::EngineLink*	fEngine;

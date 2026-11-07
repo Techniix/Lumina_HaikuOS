@@ -14,7 +14,7 @@ namespace engine {
 LuminaDecorator::LuminaDecorator(DesktopSettings& settings, BRect frame,
 	Desktop* desktop)
 	:
-	DefaultDecorator(settings, frame, desktop)
+	SATDecorator(settings, frame, desktop)
 {
 }
 

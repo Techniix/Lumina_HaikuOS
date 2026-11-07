@@ -8,6 +8,7 @@
 
 #include <filesystem>
 
+#include <Application.h>
 #include <Messenger.h>
 #include <Roster.h>
 
@@ -121,7 +122,8 @@ ShowDeskbar()
 
 
 status_t
-RestoreStockLocally(std::vector<std::string>* failures, BString* report)
+RestoreStockLocally(std::vector<std::string>* failures, BString* report,
+	bool full)
 {
 	BString log;
 	// 1. Deskbar back first: the user must always be able to launch apps.
@@ -131,24 +133,30 @@ RestoreStockLocally(std::vector<std::string>* failures, BString* report)
 			failures->push_back("deskbar");
 	}
 
-	// 2. Stop Lumina components that may still run.
+	// 2. Stop Lumina components that may still run (never ourselves: the
+	// caller quits on its own; a synchronous send to our own port could
+	// block forever). Bounded timeouts throughout.
 	for (const char* signature : {LUMINA_PANEL_SIGNATURE,
 			LUMINA_SERVER_SIGNATURE}) {
 		BMessenger app(signature);
-		if (app.IsValid())
-			app.SendMessage(B_QUIT_REQUESTED);
+		if (!app.IsValid() || app.Team() == be_app->Team())
+			continue;
+		BMessage quit(B_QUIT_REQUESTED);
+		app.SendMessage(&quit, (BHandler*)NULL, 500000);
 	}
 
 	// 3. System appearance: the pristine snapshot, else built-in defaults.
 	Value snapshot;
+	std::vector<std::string> local;	// always tracked, even if caller passes NULL
 	if (SystemAppearance::LoadSnapshot(Paths::StockSnapshotFile(), snapshot)) {
-		size_t before = failures != NULL ? failures->size() : 0;
-		SystemAppearance::Restore(snapshot, failures);
-		log << "Restored the saved stock configuration. ";
+		SystemAppearance::Restore(snapshot, &local,
+			full ? nullptr : &SystemAppearance::kManagedItems);
+		log << (full ? "Restored the full saved stock configuration. "
+			: "Restored the stock decorator and Deskbar. ");
 		// The snapshot describes the state *before* Lumina was enabled. Once
 		// restored it is retired, so the next activation captures whatever
 		// the user changes in stock mode meanwhile.
-		if (failures == NULL || failures->size() == before) {
+		if (local.empty()) {
 			std::error_code ec;
 			std::filesystem::rename(Paths::StockSnapshotFile(),
 				Paths::StockSnapshotFile() + ".last", ec);
@@ -158,6 +166,9 @@ RestoreStockLocally(std::vector<std::string>* failures, BString* report)
 			PrivateApi::SetDecorator("Default");
 		log << "No snapshot found; reset the decorator to Default. ";
 	}
+
+	if (failures != NULL)
+		failures->insert(failures->end(), local.begin(), local.end());
 
 	// 4. Don't start Lumina at the next login, and record the mode.
 	SetEnabledAtLogin(false);

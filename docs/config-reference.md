@@ -25,6 +25,7 @@ Paths are dotted; `*` is an array index. Settings marked *try-mode* are applied 
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `windows.engine.enabled` | bool | `true` | Select the Lumina decorator add-on (looks identical to Default). |
+| `windows.engine.replaceDecorator` | bool | `false` | Allow the engine to replace a non-Default decorator (e.g. Flat). Off: your decorator is kept and engine features are unavailable. *(try-mode)* |
 | `windows.decorator.style` | enum: `haiku` | `"haiku"` | Only 'haiku' (pixel-identical to Default) exists so far; parametric styles are on the roadmap. *(try-mode)* |
 | `windows.snap.enabled` | bool | `false` |  |
 | `windows.snap.edgeThreshold` | int (0–64) | `2` |  |

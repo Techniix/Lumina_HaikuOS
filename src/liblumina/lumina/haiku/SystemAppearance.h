@@ -26,9 +26,16 @@ namespace SystemAppearance {
 // Reads the current system state into a JSON-able document.
 Value Capture();
 
+// Items Lumina itself changes; "Restore stock" restores only these by
+// default, so changes the user made in Haiku's own preflets while Lumina
+// was active (colours, fonts, mouse, workspaces) are never reverted.
+extern const std::vector<std::string> kManagedItems;	// decorator, deskbar
+
 // Applies a captured document. Each item is applied independently; the
-// names of items that failed are returned in `failures`.
-status_t Restore(const Value& snapshot, std::vector<std::string>* failures);
+// names of items that failed are returned in `failures`. `only` limits the
+// restore to the named top-level items (NULL = everything captured).
+status_t Restore(const Value& snapshot, std::vector<std::string>* failures,
+	const std::vector<std::string>* only = nullptr);
 
 // Ensures a snapshot exists on disk (only the first call ever writes one,
 // so later calls can't overwrite the pristine state with Lumina's own).
