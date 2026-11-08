@@ -125,6 +125,16 @@ zoom/scale transitions need no frozen background at all.
 
 ## 3. What is impossible without app_server changes — and why
 
+> **Superseded (2026-11-08).** The table below was the Level 1 (client-side)
+> verdict. docs/07-advanced-integration-research.md re-examined every row in
+> the app_server source. Close and minimize animations started *anywhere*,
+> cursor themes, verified-background fades and rounded corners are possible
+> on stock Haiku from the Window Engine (Level 2). True translucency, live
+> blur, soft shadows and real fades are possible for Lumina's own surfaces
+> with a small optional app_server patch (Level 3). The rows are kept for
+> history; in particular, the "close" row was wrong for in-app_server code:
+> the pixels are still intact when `WindowHidden()` runs.
+
 | Wanted | Why not | Closest honest alternative (implemented) |
 |---|---|---|
 | Per-window translucency (see-through windows/panels) | No compositing, no backing stores: blended pixels underneath don't exist | Frosted glass from captured/adjacent pixels (frozen or edge-synthesised); never called "transparency" in the UI |

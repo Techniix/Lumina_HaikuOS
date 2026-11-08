@@ -33,6 +33,7 @@ struct EngineInfo {
 	BString	reason;
 	int32	animating = 0;
 	BString	statsJson;
+	bool	compositor = false;	// overlay compositor (patched app_server)
 };
 
 class EngineLink {

@@ -7,6 +7,8 @@ add_executable(lumina_core_tests
 	core/TestAnim.cpp
 	core/TestFx.cpp
 	core/TestPersonalities.cpp
+	core/TestLifecycle.cpp
+	core/TestOverlay.cpp
 )
 target_link_libraries(lumina_core_tests PRIVATE lumina_core)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)

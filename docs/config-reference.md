@@ -78,6 +78,26 @@ Paths are dotted; `*` is an array index. Settings marked *try-mode* are applied 
 | `fx.proxies.durationMs` | int (0–2000) | `220` |  |
 | `fx.proxies.restore` | bool | `true` | Restore from the panel with the cached window image. |
 
+## Effects/Lifecycle
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `fx.lifecycle.enabled` | bool | `false` | Engine-side transitions for every close/hide/minimize/restore, whoever starts it (needs the Window Engine; docs/07). *(try-mode)* |
+| `fx.lifecycle.close` | bool | `true` | Animate windows that close or hide. |
+| `fx.lifecycle.minimize` | bool | `true` | Fly minimized windows to their panel button. |
+| `fx.lifecycle.restore` | bool | `true` | Fly restored windows out of their panel button. |
+| `fx.lifecycle.fade` | bool | `false` | Crossfade closing windows into the remembered background when it is verifiably unchanged; otherwise shrink. |
+| `fx.lifecycle.durationMs` | int (0–2000) | `200` |  |
+| `fx.lifecycle.closeScale` | number (0.3–1) | `0.9` |  |
+| `fx.lifecycle.minVisible` | number (0–1) | `0.8` | Skip the transition when less of the window than this is visible (its hidden parts have no pixels). |
+| `fx.lifecycle.cacheBudgetMB` | int (0–512) | `48` | Memory for restore snapshots and remembered backgrounds. |
+
+## Appearance
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `appearance.cursorTheme` | string | `""` | Cursor theme name (a directory with theme.json under ~/config/settings/Lumina/cursors or data/Lumina/cursors); empty = stock cursors. |
+
 ## Panels
 
 | Setting | Type | Default | Description |

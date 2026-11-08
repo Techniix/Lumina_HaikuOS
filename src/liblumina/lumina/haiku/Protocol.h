@@ -129,6 +129,16 @@ const int32 kEngineProtocolVersion = 1;
 #define LUMINA_OP_CONFIGURE		"configure"		// json: snap/anim settings
 #define LUMINA_OP_RESERVE		"reserve"		// json: reserved areas
 #define LUMINA_OP_LIST			"list"			// re-send "added" for all
+// Lifecycle transitions and cursor themes (docs/07 §C–§G):
+#define LUMINA_OP_PROXIES		"proxies"		// lumina:token[] proxy windows
+#define LUMINA_OP_ANCHORS		"anchors"		// token[] + frame[] (panel buttons)
+#define LUMINA_OP_CURSOR_THEME	"cursor-theme"	// lumina:path ("" = stock)
+#define LUMINA_ENGINE_FIELD_PATH	"lumina:path"
+// Level 3, only with the overlay-compositor app_server patch (docs/09):
+#define LUMINA_OP_OVERLAY		"overlay"		// token, json params
+#define LUMINA_OP_OVERLAY_OFF	"overlay-off"	// token
+#define LUMINA_OP_OVERLAY_DAMAGE "overlay-damage"	// token, [frame]
+#define LUMINA_ENGINE_STATUS_COMPOSITOR "lumina:compositor"	// bool
 
 // Engine event ops (LUMINA_ENGINE_EVENT, field LUMINA_ENGINE_FIELD_OP)
 #define LUMINA_EVENT_ADDED		"added"
@@ -142,6 +152,7 @@ const int32 kEngineProtocolVersion = 1;
 #define LUMINA_EVENT_SNAPPED	"snapped"
 #define LUMINA_EVENT_ANIM_DONE	"animation-done"
 #define LUMINA_EVENT_DROPPED	"dropped"	// queue overflow notice
+#define LUMINA_EVENT_LIFECYCLE	"lifecycle"	// proxy took over a window
 
 // Event payload fields
 #define LUMINA_EV_TOKEN		"token"		// int32 server token
@@ -155,6 +166,9 @@ const int32 kEngineProtocolVersion = 1;
 #define LUMINA_EV_LOOK		"look"		// int32
 #define LUMINA_EV_TIME		"when"		// int64 system_time()
 #define LUMINA_EV_ZONE		"zone"		// snapped zone name
+#define LUMINA_EV_PROXY		"proxy"		// int32 proxy window token
+#define LUMINA_EV_KIND		"kind"		// hide|close|minimize|restore
+#define LUMINA_EV_DECISION	"decision"	// animate|fade|obscured|…
 
 }	// namespace haiku
 }	// namespace lumina

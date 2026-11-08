@@ -223,7 +223,8 @@ private:
 class WindowListApplet : public Applet {
 public:
 	WindowListApplet(const AppletContext& context)
-		: Applet("windows", context, B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE)
+		: Applet("windows", context, B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE
+			| B_FRAME_EVENTS)
 	{
 		SetExplicitMinSize(BSize(60, context.thickness));
 		SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, context.thickness));
@@ -249,6 +250,7 @@ public:
 				if (it != byTeam.end()) {
 					fItems[it->second].count++;
 					fItems[it->second].allMinimized &= w.minimized;
+					fItems[it->second].tokens.push_back(w.token);
 					continue;
 				}
 				byTeam[w.team] = fItems.size();
@@ -256,26 +258,36 @@ public:
 			Item item;
 			item.window = w;
 			item.allMinimized = w.minimized;
+			item.tokens.push_back(w.token);
 			fItems.push_back(item);
 		}
+		_Layout();
 		Invalidate();
+	}
+
+	void FrameResized(float width, float height)
+	{
+		Applet::FrameResized(width, height);
+		_Layout();
+	}
+
+	void FrameMoved(BPoint where)
+	{
+		Applet::FrameMoved(where);
+		_PushAnchors();
 	}
 
 	void Draw(BRect update)
 	{
-		BRect bounds = Bounds();
 		rgb_color base = ui_color(B_MENU_BACKGROUND_COLOR);
 		DrawPanelBackground(update);
 		if (fItems.empty())
 			return;
-		float width = std::min(180.0f, bounds.Width() / fItems.size());
 		font_height fh;
 		GetFontHeight(&fh);
 		for (size_t i = 0; i < fItems.size(); i++) {
 			Item& item = fItems[i];
-			BRect r(bounds.left + i * width, bounds.top,
-				bounds.left + (i + 1) * width - 2, bounds.bottom);
-			item.rect = r;
+			BRect r = item.rect;
 			uint32 flags = item.allMinimized ? 0 : BControlLook::B_ACTIVATED;
 			if (r.Intersects(update)) {
 				be_control_look->DrawButtonBackground(this, r, update, base,
@@ -326,10 +338,52 @@ public:
 private:
 	struct Item {
 		WindowSnapshot	window;
+		std::vector<int32> tokens;	// every window this button stands for
 		int32			count = 1;
 		bool			allMinimized = false;
 		BRect			rect;
 	};
+
+	void _Layout()
+	{
+		BRect bounds = Bounds();
+		if (fItems.empty())
+			return;
+		float width = std::min(180.0f, bounds.Width() / fItems.size());
+		for (size_t i = 0; i < fItems.size(); i++) {
+			fItems[i].rect = BRect(bounds.left + i * width, bounds.top,
+				bounds.left + (i + 1) * width - 2, bounds.bottom);
+		}
+		_PushAnchors();
+	}
+
+	// Tells the Window Engine where each window's button is, so a minimize
+	// from anywhere (title tab, Deskbar, keyboard, the app itself) flies
+	// here and restores come from here. Sent only when the layout changed.
+	void _PushAnchors()
+	{
+		if (Window() == NULL)
+			return;
+		BMessage command;
+		command.AddString(LUMINA_ENGINE_FIELD_OP, LUMINA_OP_ANCHORS);
+		command.AddBool("lumina:replace", true);
+		BString signature;
+		for (const Item& item : fItems) {
+			BRect screen = ConvertToScreen(item.rect);
+			for (int32 token : item.tokens) {
+				command.AddInt32(LUMINA_ENGINE_FIELD_TOKEN, token);
+				command.AddRect(LUMINA_ENGINE_FIELD_FRAME, screen);
+				signature << token << ':' << screen.left << ','
+					<< screen.top << ';';
+			}
+		}
+		if (signature == fAnchorSignature)
+			return;
+		fAnchorSignature = signature;
+		haiku::LuminaClient client(100000);
+		if (client.IsServerRunning())
+			client.WindowCommand(command);
+	}
 
 	// Ask lumina_server so the effects engine can play a transition (proxy
 	// zoom to/from this button); fall back to the direct call.
@@ -378,6 +432,7 @@ private:
 	std::vector<Item>	fItems;
 	std::map<std::string, BBitmap*> fIcons;
 	bool				fGrouped = true;
+	BString				fAnchorSignature;
 };
 
 
