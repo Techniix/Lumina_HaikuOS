@@ -1,6 +1,6 @@
 # Implementation status
 
-*Updated 2026-11-07.* The legend is deliberately strict:
+*Updated 2026-11-08.* The legend is deliberately strict:
 
 * **tested** — covered by automated tests that run (host and Haiku)
 * **compile-verified** — compiles with `-Werror` against real Haiku
@@ -31,6 +31,15 @@
 | Emergency chord input filter | `src/input` | compile-verified |
 | launch_daemon integration, install layout | `data/user_launch`, `cmake/LuminaInstall.cmake` | written; untested |
 | VFX prototypes A–D with self-tests and reports | `experiments/` | prototype, compile-verified |
+| Lifecycle policy, snapshot cache, crossfade, background ring check | `src/core/lumina/fx/Lifecycle.*` | **tested** (host) |
+| Engine lifecycle capture + proxies (close/hide/minimize/restore from any initiator; optional crossfade) | `src/engine/LuminaEngineLifecycle.cpp`, `src/server/LifecycleProxies.*` | compile-verified |
+| Panel → engine button anchors | `src/panel/BuiltinApplets.cpp` | compile-verified |
+| Cursor themes: manifest, sizes, premultiply | `src/core/lumina/CursorTheme.*` | **tested** (host) |
+| Cursor themes: CursorSet builder, engine apply/reset, `lumina cursors`, sample theme | `src/liblumina/.../CursorThemes.*`, engine, CLI, `data/cursors` | compile-verified |
+| Overlay compose core (blur, tint, opacity, rounded corners, shadow; partial = full) | `src/core/lumina/fx/OverlayCompose.*` | **tested** (host) |
+| Optional app_server overlay compositor patch | `patches/haiku/` | applies cleanly; type-checked; **not built or run** |
+| Engine bridge to the compositor (run-time symbol lookup) | `src/engine/LuminaEngineOverlay.cpp` | compile-verified |
+| Experiments E (lifecycle, cursor theme) and F (overlay compositor) | `experiments/fx-lifecycle-engine`, `experiments/fx-overlay-compositor` | prototype, compile-verified |
 | Haiku compile-check toolchain + CI | `cmake/`, `tools/`, `.github/` | working (this repo's builds) |
 | VM / remote test scripts | `tools/vm`, `tools/haiku` | written; untested |
 | HaikuPorts recipe | `haikuports/` | draft |
@@ -44,7 +53,7 @@
 ## Tests
 
 ```
-host:  43 unit tests / 480+ checks  (ctest: core, personalities)
+host:  57 unit tests / 560+ checks  (ctest: core, personalities)
 haiku: the same suite runs on Haiku via tools/haiku/build.sh
 ```
 
@@ -74,6 +83,23 @@ haiku: the same suite runs on Haiku via tools/haiku/build.sh
     never left without it.
 13. Window rules apply when a window is first activated (at "added" it is
     still hidden and the app may still position it).
+14. Lifecycle transitions call more app_server internals than before
+    (`View::SetViewBitmap`, `CursorManager`, `DrawingEngine` locks). If any
+    symbol is not exported by the app_server binary, the add-on will not
+    load and app_server falls back to its built-in decorator; verify first.
+15. Windows less than 80% visible are not animated (their hidden pixels
+    don't exist); restores via `BWindow::Activate()` on a minimized window
+    are not notified and appear without animation.
+16. The panel does not yet render into a bitmap, so it can't be an overlay
+    window; Level 3 is exercised by experiment F only.
+17. The Level 3 patch has not been built with jam. Installing a patched
+    app_server on real hardware has no verified reversible path yet; use a
+    VM image (patches/haiku/README.md).
+18. Animated cursors are designed but not implemented.
+
+Rule matching now receives window feel (and look, from engine events), and
+rule placement honours panels on all four edges (both gaps were found while
+writing docs/08).
 
 An independent review of the engine and server against the app_server
 sources (2026-11-07) found 12 issues; all are fixed in the code (parking vs.

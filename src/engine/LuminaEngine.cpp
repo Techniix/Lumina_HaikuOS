@@ -128,6 +128,7 @@ LuminaEngine::ListenerRegistered(Desktop* desktop)
 {
 	fDesktop = desktop;
 	_CheckAbi();
+	_ResolveCompositor();
 }
 
 
@@ -137,7 +138,14 @@ LuminaEngine::ListenerUnregistered()
 	// Called with the desktop write lock held, right before app_server
 	// unloads this image. We own no threads, so there is nothing to join.
 	// Land in-flight animations on their targets so no window is left
-	// half-way when the decorator is switched.
+	// half-way when the decorator is switched. Proxies are hidden and a
+	// cursor theme is reverted: nothing of ours may outlive the add-on.
+	if (fDesktop != NULL) {
+		_ResetOverlays();
+		_LifecycleReset();
+		if (!fCursorTheme.IsEmpty())
+			_ApplyCursorTheme(NULL);
+	}
 	if (fDesktop != NULL && fTimeline.HasActive())
 		_Tick(1e12);
 	while (fDesktop != NULL && !fParked.empty())
@@ -411,6 +419,8 @@ LuminaEngine::_Tick(double now)
 			fSteppers.erase(token);
 			_Push(LUMINA_EVENT_MOVED, window);
 			_Push(LUMINA_EVENT_ANIM_DONE, window);
+			if (_IsProxy(token))
+				_ProxyLanded(token);
 		}
 	}
 	bigtime_t cost = system_time() - start;
@@ -550,6 +560,16 @@ LuminaEngine::_ApplyConfiguration(const char* json)
 		if (const Value* v = animation->Find("parkTimeout"))
 			fSettings.parkTimeout = float(v->AsNumber(0.8));
 	}
+	if (const Value* lifecycle = doc.Find("lifecycle")) {
+		fLifecycle.Apply(*lifecycle);
+		size_t budget = size_t(fLifecycle.cacheBudgetMB) << 20;
+		fSnapshots.SetBudget(budget * 2 / 3);
+		fBackgrounds.SetBudget(budget / 3);
+		if (!fLifecycle.fade) {
+			fBackgrounds.Clear();
+			fBackgroundFrames.clear();
+		}
+	}
 	if (const Value* reserved = doc.Find("reserved")) {
 		fSettings.reserved.clear();
 		for (const Value& item : reserved->Items()) {
@@ -598,12 +618,32 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 		return;
 	}
 
+	if (op == LUMINA_OP_ANCHORS) {
+		_SetAnchors(command);
+		return;
+	}
+
 	// Below here windows change: only with a passing ABI guard.
 	if (!fActive || fDesktop == NULL)
 		return;
 
+	if (op == LUMINA_OP_PROXIES) {
+		_RegisterProxies(command);
+		return;
+	}
+	if (op == LUMINA_OP_OVERLAY || op == LUMINA_OP_OVERLAY_OFF
+		|| op == LUMINA_OP_OVERLAY_DAMAGE) {
+		_HandleOverlayCommand(op, command);
+		return;
+	}
+	if (op == LUMINA_OP_CURSOR_THEME) {
+		_ApplyCursorTheme(command.GetString(LUMINA_ENGINE_FIELD_PATH, ""));
+		return;
+	}
+
 	if (op == "tick") {
 		_Tick(now);
+		_LifecycleTick(now);
 		_UnparkStale(now);
 		_FlushCoalesced(true);
 		return;
@@ -612,6 +652,10 @@ LuminaEngine::_HandleCommand(Window* sender, const BMessage& command)
 		// Land every animation and parked window now (used before
 		// switching back to stock, so nothing is left half-way).
 		_Tick(1e12);
+		for (Proxy& proxy : fProxies) {
+			if (proxy.source >= 0)
+				_ReleaseProxy(proxy, "finish");
+		}
 		while (!fParked.empty())
 			_Unpark(fParked.begin()->first, true);
 		_FlushCoalesced(true);
@@ -689,6 +733,7 @@ void
 LuminaEngine::WindowAdded(Window* window)
 {
 	_UnparkStale(_Now());
+	fPendingShow[_TokenOf(window)] = _Now();
 	if (_ShouldPark(window)) {
 		// The window is still hidden (BWindow shows itself later), so moving
 		// it off-screen now can't flash. Its intended frame is reported so a
@@ -717,6 +762,8 @@ LuminaEngine::WindowRemoved(Window* window)
 	fParked.erase(token);
 	if (fDragToken == token)
 		fDragToken = -1;
+	_LifecycleRemoved(token);
+	fOverlays.erase(token);	// app_server drops the layer itself
 	_Push(LUMINA_EVENT_REMOVED, window);
 }
 
@@ -744,6 +791,8 @@ LuminaEngine::MouseDown(Window* window, BMessage* message, const BPoint& where)
 	double now = _Now();
 	_FinishStaleAnimations(now);
 	_UnparkStale(now);
+	if (_ProxiesBusy())
+		_LifecycleTick(now);
 	int32 token = _TokenOf(window);
 	fDragToken = token;
 	fDragMoved = false;
@@ -809,6 +858,8 @@ LuminaEngine::MouseMoved(Window* window, BMessage* message, const BPoint& where)
 		_UnparkStale(now);
 		_FinishStaleAnimations(now);
 	}
+	if (_ProxiesBusy())
+		_LifecycleTick(_Now());
 	_FlushCoalesced(false);
 }
 
@@ -817,6 +868,8 @@ void
 LuminaEngine::WindowMoved(Window* window)
 {
 	int32 token = _TokenOf(window);
+	fBackgrounds.Erase(token);		// what was beneath is no longer known
+	fBackgroundFrames.erase(token);
 	auto parked = fParked.find(token);
 	if (parked != fParked.end()
 		&& window->Frame().LeftTop() != parked->second.parkedAt) {
@@ -839,6 +892,8 @@ LuminaEngine::WindowMoved(Window* window)
 void
 LuminaEngine::WindowResized(Window* window)
 {
+	fBackgrounds.Erase(_TokenOf(window));
+	fBackgroundFrames.erase(_TokenOf(window));
 	if (_TokenOf(window) == fDragToken)
 		fDragResized = true;
 	_Push(LUMINA_EVENT_RESIZED, window);
@@ -850,6 +905,7 @@ LuminaEngine::WindowActivated(Window* window)
 {
 	if (!fParked.empty())
 		_UnparkStale(_Now());
+	_LifecycleShown(window);
 	_Push(LUMINA_EVENT_ACTIVATED, window);
 }
 
@@ -870,6 +926,9 @@ LuminaEngine::WindowWorkspacesChanged(Window* window, uint32 workspaces)
 void
 LuminaEngine::WindowHidden(Window* window, bool fromMinimize)
 {
+	// Still under Desktop::HideWindow's write lock: the window's pixels
+	// are intact (see LuminaEngineLifecycle.cpp).
+	_LifecycleHidden(window, fromMinimize);
 	_Push(LUMINA_EVENT_HIDDEN, window, fromMinimize);
 }
 
@@ -877,6 +936,8 @@ LuminaEngine::WindowHidden(Window* window, bool fromMinimize)
 void
 LuminaEngine::WindowMinimized(Window* window, bool minimize)
 {
+	if (!minimize)
+		_LifecycleRestored(window);
 	_Push(LUMINA_EVENT_MINIMIZED, window, minimize);
 }
 
@@ -945,6 +1006,7 @@ LuminaEngine::GetDecoratorSettings(Window* window, BMessage& settings)
 	settings.AddInt32(LUMINA_ENGINE_STATUS_ANIMATING,
 		int32(fTimeline.ActiveCount()));
 	settings.AddString(LUMINA_ENGINE_STATUS_STATS, _StatsJson());
+	settings.AddBool(LUMINA_ENGINE_STATUS_COMPOSITOR, fOverlayApi != NULL);
 }
 
 
@@ -961,14 +1023,25 @@ LuminaEngine::_StatsJson() const
 		B_PRIu64 ",\"staleCompletions\":%" B_PRIu64
 		",\"avgTickUsecs\":%.1f,\"maxTickUsecs\":%" B_PRId64
 		",\"parked\":%" B_PRIu64 ",\"autoUnparked\":%" B_PRIu64
-		",\"subscribers\":%d,\"snapEnabled\":%s,\"animate\":%s}",
+		",\"subscribers\":%d,\"snapEnabled\":%s,\"animate\":%s"
+		",\"lifecycle\":{\"enabled\":%s,\"proxies\":%d,\"animated\":%"
+		B_PRIu64 ",\"faded\":%" B_PRIu64 ",\"skipped\":%" B_PRIu64
+		",\"timeouts\":%" B_PRIu64 ",\"backgrounds\":%" B_PRIu64
+		",\"maxCaptureUsecs\":%" B_PRId64 ",\"cacheBytes\":%zu}"
+		",\"cursorTheme\":\"%s\"}",
 		fStats.commands, fStats.ticks, fStats.framesApplied, fStats.eventsSent,
 		fStats.eventsDropped, fStats.snaps, fStats.animationsStarted,
 		fStats.animationsRetargeted, fStats.staleCompletions, avg,
 		fStats.maxTickUsecs, fStats.parked, fStats.autoUnparked,
 		int(fSubscribers.size()),
 		fSettings.snapEnabled ? "true" : "false",
-		fSettings.animate ? "true" : "false");
+		fSettings.animate ? "true" : "false",
+		fLifecycle.enabled ? "true" : "false", int(fProxies.size()),
+		fStats.lifecycleAnimated, fStats.lifecycleFaded,
+		fStats.lifecycleSkipped, fStats.lifecycleTimeouts,
+		fStats.backgroundsRemembered, fStats.maxCaptureUsecs,
+		fSnapshots.Bytes() + fBackgrounds.Bytes(),
+		fCursorTheme.IsEmpty() ? "stock" : "custom");
 	return json;
 }
 

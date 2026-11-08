@@ -11,11 +11,14 @@ selecting any other decorator unloads it. No Haiku file is modified.
 |---|---|
 | Stock look | `LuminaDecorator` *is* `SATDecorator` — what stock Haiku allocates (`DecorAddOn::_AllocateDecorator`) — with no overrides → pixel-identical tabs, borders, buttons and Stack & Tile highlights. Users on another decorator keep it (`windows.engine.replaceDecorator`) |
 | Window events | added (with hidden flag), removed, moved, resized (coalesced ≤ 30 Hz), activated, workspaces, hidden, minimized, snapped, animation-done, parked/unparked — pushed as `BMessage`s to subscribers. Engine-initiated changes are reported explicitly, because listener notifications are suppressed inside our own hooks |
-| Commands | `move-resize`, `animate` (curve, duration, resize mode), `cancel`, `finish` (land everything now), `minimize`, `activate`, `workspace`, `configure`, `reserve`, `list`, `tick`, `unpark` |
+| Commands | `move-resize`, `animate` (curve, duration, resize mode), `cancel`, `finish` (land everything now), `minimize`, `activate`, `workspace`, `configure`, `reserve`, `list`, `tick`, `unpark`, `proxies`, `anchors`, `cursor-theme`, `overlay`, `overlay-off`, `overlay-damage` |
 | Snapping | drag-release at an edge/corner → halves, quarters, maximize; respects areas reserved by panels; animated or instant |
 | Geometry animation | real window frames interpolated in app_server (`docs/vfx.md` §C) |
 | Open transitions | new normal windows parked off-screen before their first show, for a proxy to animate into (opt-in). If the app positions its window itself before `Show()` (e.g. `CenterOnScreen()`), that position becomes the target and the window stays parked; unparking moves to the intended *absolute* position. Auto-unpark after 0.8 s from any mouse/key/activation hook |
 | ABI guard | compares the hrev it was built for with `uname`; on mismatch every window-changing feature is disabled and `lumina engine` says why |
+| Lifecycle transitions | `WindowHidden()` runs under `Desktop::HideWindow`'s write lock before anything repaints: the window's pixels are copied from the back buffer into a registered proxy (`proxies` op), which is shown in the same transaction and then shrinks, flies to its panel button (`anchors` op) or crossfades into the background remembered at first show. Restores park the window and fly the cached image out. Opt-in (`fx.lifecycle.*`); see [docs/07](07-advanced-integration-research.md) §C–§E |
+| Cursor themes | `cursor-theme` op → `CursorManager::SetCursorSet()` (path) or `InitializeCursors()` (stock); reset on unload |
+| Overlay compositor bridge | resolves `lumina_overlay_get_api` from the app_server image at run time; `overlay`, `overlay-off`, `overlay-damage` ops for Lumina windows; status field `lumina:compositor`. Only with the Level 3 patch |
 
 ## Design decisions (and the reasons found in app_server's source)
 

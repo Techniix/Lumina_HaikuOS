@@ -49,6 +49,7 @@
 #include <String.h>
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -59,8 +60,12 @@
 
 #include <lumina/Rules.h>
 #include <lumina/anim/Timeline.h>
+#include <lumina/fx/Lifecycle.h>
 
+struct lumina_overlay_api;
 class Desktop;
+class ServerBitmap;
+class View;
 class Window;
 
 namespace lumina {
@@ -99,6 +104,14 @@ struct EngineStats {
 	uint64		autoUnparked = 0;
 	bigtime_t	maxTickUsecs = 0;
 	bigtime_t	totalTickUsecs = 0;
+	// lifecycle transitions
+	uint64		lifecycleAnimated = 0;
+	uint64		lifecycleFaded = 0;
+	uint64		lifecycleSkipped = 0;
+	uint64		lifecycleTimeouts = 0;
+	uint64		backgroundsRemembered = 0;
+	bigtime_t	maxCaptureUsecs = 0;
+	uint64		cursorThemesApplied = 0;
 };
 
 class LuminaEngine : public DesktopListener {
@@ -172,6 +185,60 @@ private:
 	void _CheckAbi();
 	BString _StatsJson() const;
 	bool _IsLuminaClient(Window* window) const;
+
+	// Lifecycle transitions and cursor themes (LuminaEngineLifecycle.cpp).
+	// See docs/07-advanced-integration-research.md §C, §D, §E, §G.
+	struct Proxy {
+		int32				token = -1;		// the proxy window
+		int32				source = -1;	// window it stands in for; -1 free
+		fx::LifecycleKind	kind = fx::LifecycleKind::Hide;
+		double				since = 0;
+		double				duration = 0;
+		double				releaseAt = 0;	// >0: hide then (restore settle)
+		bool				fading = false;
+		bool				flying = false;	// geometry animation running
+		fx::Image			from;			// crossfade endpoints
+		fx::Image			to;
+	};
+	void _RegisterProxies(const BMessage& command);
+	void _SetAnchors(const BMessage& command);
+	Proxy* _FreeProxy();
+	Proxy* _ProxyByToken(int32 token);
+	bool _IsProxy(int32 token);
+	ServerBitmap* _ProxyBitmap(Window* proxyWindow, View** _view);
+	fx::WindowTraits _Traits(Window* window, BRect outer);
+	BRect _ScreenClip(BRect rect) const;
+	bool _ReadScreen(BRect area, const fx::ImageView& into);
+	bool _PlaceProxy(Proxy& proxy, Window* proxyWindow, BRect frame,
+		const fx::ImageView& pixels);
+	void _LifecycleHidden(Window* window, bool fromMinimize);
+	void _LifecycleRemoved(int32 token);
+	void _LifecycleRestored(Window* window);
+	void _LifecycleShown(Window* window);
+	void _LifecycleTick(double now);
+	void _ReleaseProxy(Proxy& proxy, const char* why);
+	void _ProxyLanded(int32 token);
+	bool _ProxiesBusy() const;
+	void _LifecycleReset();
+	void _PushLifecycle(const Proxy& proxy, BRect frame, const char* decision);
+	void _ApplyCursorTheme(const char* path);
+
+	// Level 3: app_server overlay compositor, if patched in
+	// (LuminaEngineOverlay.cpp).
+	void _ResolveCompositor();
+	void _HandleOverlayCommand(const BString& op, const BMessage& command);
+	void _ResetOverlays();
+	const lumina_overlay_api*	fOverlayApi = NULL;
+	std::set<int32>				fOverlays;
+
+	fx::LifecycleSettings	fLifecycle;
+	std::vector<Proxy>		fProxies;
+	fx::SnapshotCache		fSnapshots;		// last image of minimized windows
+	fx::SnapshotCache		fBackgrounds;	// what was under a window (+ring)
+	std::map<int32, BRect>	fBackgroundFrames;
+	std::map<int32, double>	fPendingShow;	// added/hidden, not yet shown
+	std::map<int32, BRect>	fAnchors;		// panel buttons per window
+	BString					fCursorTheme;
 
 	Desktop*			fDesktop;
 	bool				fActive;

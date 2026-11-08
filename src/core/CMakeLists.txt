@@ -14,6 +14,9 @@ add_library(lumina_core STATIC
 	lumina/fx/Image.cpp
 	lumina/fx/Glass.cpp
 	lumina/fx/Strategy.cpp
+	lumina/fx/Lifecycle.cpp
+	lumina/fx/OverlayCompose.cpp
+	lumina/CursorTheme.cpp
 )
 target_include_directories(lumina_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(lumina_core PROPERTIES POSITION_INDEPENDENT_CODE ON)

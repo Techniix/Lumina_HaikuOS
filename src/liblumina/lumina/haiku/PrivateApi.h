@@ -29,6 +29,7 @@ struct WindowSnapshot {
 	uint32		workspaces = 0;
 	int32		layer = 0;
 	uint32		feel = 0;
+	int32		look = -1;		// window_look; -1 = unknown (engine events only)
 	uint32		flags = 0;
 	bool		minimized = false;
 	bool		hidden = false;		// show_hide_level > 0

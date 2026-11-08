@@ -1,0 +1,108 @@
+{
+  "name": "Lumina Outline",
+  "sizes": [
+    22,
+    33,
+    44
+  ],
+  "cursors": {
+    "default": {
+      "file": "default.png",
+      "hotspot": [
+        2,
+        1
+      ]
+    },
+    "progress": {
+      "file": "progress.png",
+      "hotspot": [
+        2,
+        1
+      ]
+    },
+    "text": {
+      "file": "text.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "crosshair": {
+      "file": "crosshair.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "move": {
+      "file": "move.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "not-allowed": {
+      "file": "not-allowed.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-ew": {
+      "file": "resize-ew.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-ns": {
+      "file": "resize-ns.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-nwse": {
+      "file": "resize-nwse.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-nesw": {
+      "file": "resize-nesw.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-e": {
+      "file": "resize-e.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-w": {
+      "file": "resize-w.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-n": {
+      "file": "resize-n.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    },
+    "resize-s": {
+      "file": "resize-s.png",
+      "hotspot": [
+        11,
+        11
+      ]
+    }
+  }
+}

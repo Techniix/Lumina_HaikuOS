@@ -11,13 +11,15 @@ set(LIBLUMINA_SOURCES
 	lumina/haiku/OSInterface.cpp
 	lumina/haiku/ModeControl.cpp
 	lumina/haiku/VisualEffects.cpp
+	lumina/haiku/CursorThemes.cpp
 )
 
 if(LUMINA_COMPILE_CHECK_ONLY)
 	add_library(liblumina OBJECT ${LIBLUMINA_SOURCES})
 else()
 	add_library(liblumina SHARED ${LIBLUMINA_SOURCES})
-	target_link_libraries(liblumina PUBLIC lumina_core ${LUMINA_LIB_BE})
+	target_link_libraries(liblumina PUBLIC lumina_core ${LUMINA_LIB_BE}
+		translation)
 	set_target_properties(liblumina PROPERTIES OUTPUT_NAME lumina VERSION ${PROJECT_VERSION}
 		SOVERSION ${PROJECT_VERSION_MAJOR})
 endif()

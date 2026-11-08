@@ -7,7 +7,8 @@ if(LUMINA_COMPILE_CHECK_ONLY)
 	set_target_properties(fxlab PROPERTIES EXCLUDE_FROM_ALL OFF)
 endif()
 
-foreach(proto fx-alpha-panel fx-capture-glass fx-window-anim fx-snapshot-proxy)
+foreach(proto fx-alpha-panel fx-capture-glass fx-window-anim fx-snapshot-proxy
+		fx-lifecycle-engine fx-overlay-compositor)
 	file(GLOB _src ${CMAKE_CURRENT_SOURCE_DIR}/${proto}/*.cpp)
 	lumina_haiku_executable(${proto}
 		SOURCES ${_src}
@@ -16,3 +17,8 @@ foreach(proto fx-alpha-panel fx-capture-glass fx-window-anim fx-snapshot-proxy)
 	target_include_directories(${proto} PRIVATE
 		${PROJECT_SOURCE_DIR}/src/core ${PROJECT_SOURCE_DIR}/src/liblumina)
 endforeach()
+
+# Experiment E reuses lumina_server's proxy pool.
+target_sources(fx-lifecycle-engine PRIVATE
+	${PROJECT_SOURCE_DIR}/src/server/LifecycleProxies.cpp)
+target_include_directories(fx-lifecycle-engine PRIVATE ${PROJECT_SOURCE_DIR})

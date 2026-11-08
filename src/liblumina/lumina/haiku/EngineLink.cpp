@@ -79,6 +79,7 @@ EngineLink::Probe(EngineInfo& info)
 	info.reason = settings.GetString(LUMINA_ENGINE_STATUS_REASON, "");
 	info.animating = settings.GetInt32(LUMINA_ENGINE_STATUS_ANIMATING, 0);
 	info.statsJson = settings.GetString(LUMINA_ENGINE_STATUS_STATS, "");
+	info.compositor = settings.GetBool(LUMINA_ENGINE_STATUS_COMPOSITOR, false);
 	return B_OK;
 }
 

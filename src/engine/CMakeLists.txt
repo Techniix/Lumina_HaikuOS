@@ -33,6 +33,8 @@ message(STATUS "Window Engine ABI: ${LUMINA_HAIKU_ABI}")
 set(ENGINE_SOURCES
 	LuminaDecorator.cpp
 	LuminaEngine.cpp
+	LuminaEngineLifecycle.cpp
+	LuminaEngineOverlay.cpp
 )
 
 lumina_haiku_addon(LuminaEngine

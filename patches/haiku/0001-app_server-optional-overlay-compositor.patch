@@ -1,0 +1,1211 @@
+diff --git a/src/servers/app/Desktop.cpp b/src/servers/app/Desktop.cpp
+index 3d40a7c..6135fd3 100644
+--- a/src/servers/app/Desktop.cpp
++++ b/src/servers/app/Desktop.cpp
+@@ -1773,6 +1773,18 @@ Desktop::RemoveWindow(Window *window)
+ 	if (!window->IsHidden())
+ 		HideWindow(window);
+ 
++	if (window->IsOverlay()) {
++		// the compositor must not outlive the window it shows
++		BRegion damage;
++		HWInterface()->Compositor().RemoveLayer(window, damage);
++		window->SetOverlay(false);
++		if (damage.CountRects() > 0
++			&& GetDrawingEngine()->LockParallelAccess()) {
++			HWInterface()->InvalidateRegion(damage);
++			GetDrawingEngine()->UnlockParallelAccess();
++		}
++	}
++
+ 	fAllWindows.RemoveWindow(window);
+ 	if (!window->IsNormal())
+ 		fSubsetWindows.RemoveWindow(window);
+@@ -2008,7 +2020,12 @@ Desktop::WindowAt(BPoint where)
+ {
+ 	for (Window* window = CurrentWindows().LastWindow(); window;
+ 			window = window->PreviousWindow(fCurrentWorkspace)) {
+-		if (window->IsVisible() && window->VisibleRegion().Contains(where))
++		if (!window->IsVisible())
++			continue;
++		// Overlay windows have no visible region; they take input in
++		// their frame.
++		if (window->IsOverlay() ? window->Frame().Contains(where)
++				: window->VisibleRegion().Contains(where))
+ 			return window->StackedWindowAt(where);
+ 	}
+ 
+@@ -3502,6 +3519,13 @@ Desktop::_RebuildClippingForAllWindows(BRegion& stillAvailableOnScreen)
+ 	for (Window* window = CurrentWindows().LastWindow(); window != NULL;
+ 			window = window->PreviousWindow(fCurrentWorkspace)) {
+ 		if (!window->IsHidden()) {
++			if (window->IsOverlay()) {
++				// Shown by the overlay compositor: takes no screen area
++				// from the windows below and never draws itself.
++				BRegion empty;
++				window->SetClipping(&empty);
++				continue;
++			}
+ 			window->SetClipping(&stillAvailableOnScreen);
+ 			window->SetScreen(_DetermineScreenFor(window->Frame()));
+ 
+@@ -3514,6 +3538,49 @@ Desktop::_RebuildClippingForAllWindows(BRegion& stillAvailableOnScreen)
+ 			stillAvailableOnScreen.Exclude(&window->VisibleRegion());
+ 		}
+ 	}
++
++	_UpdateOverlays();
++}
++
++
++/*!	Lets the overlay compositor pick up moved, resized, shown or hidden
++	overlay windows. Costs nothing while no overlay is registered.
++*/
++void
++Desktop::_UpdateOverlays()
++{
++	OverlayCompositor& compositor = HWInterface()->Compositor();
++	if (!compositor.IsActive())
++		return;
++	BRegion damage;
++	compositor.Update(damage);
++	if (damage.CountRects() > 0 && GetDrawingEngine()->LockParallelAccess()) {
++		HWInterface()->InvalidateRegion(damage);
++		GetDrawingEngine()->UnlockParallelAccess();
++	}
++}
++
++
++/*!	Turns an overlay window on or off (OverlayCompositor's C API).
++	The all window lock must be held.
++*/
++void
++Desktop::SetWindowOverlay(Window* window, bool overlay)
++{
++	if (window->IsOverlay() == overlay)
++		return;
++	BRegion dirty(window->VisibleRegion());
++	window->SetOverlay(overlay);
++	BRegion background;
++	_RebuildClippingForAllWindows(background);
++	_SetBackground(background);
++	if (!overlay)
++		dirty = window->VisibleRegion();
++	else {
++		// the windows below now own this area: let them repaint it
++		dirty.Include(window->Frame());
++	}
++	MarkDirty(dirty);
+ }
+ 
+ 
+@@ -3575,6 +3642,11 @@ Desktop::RebuildAndRedrawAfterWindowChange(Window* changedWindow,
+ 	for (Window* window = CurrentWindows().LastWindow(); window != NULL;
+ 			window = window->PreviousWindow(fCurrentWorkspace)) {
+ 		if (!window->IsHidden()) {
++			if (window->IsOverlay()) {
++				BRegion empty;
++				window->SetClipping(&empty);
++				continue;
++			}
+ 			if (window == changedWindow)
+ 				dirty.IntersectWith(&stillAvailableOnScreen);
+ 
+@@ -3593,6 +3665,7 @@ Desktop::RebuildAndRedrawAfterWindowChange(Window* changedWindow,
+ 
+ 	_SetBackground(stillAvailableOnScreen);
+ 	_WindowChanged(changedWindow);
++	_UpdateOverlays();
+ 
+ 	_TriggerWindowRedrawing(dirty, dirty);
+ }
+diff --git a/src/servers/app/Desktop.h b/src/servers/app/Desktop.h
+index 743f65f..023206a 100644
+--- a/src/servers/app/Desktop.h
++++ b/src/servers/app/Desktop.h
+@@ -185,6 +185,7 @@ public:
+ 			void				HideWindow(Window* window,
+ 									bool fromMinimize = false);
+ 			void				MinimizeWindow(Window* window, bool minimize);
++			void				SetWindowOverlay(Window* window, bool overlay);
+ 
+ 			void				MoveWindowBy(Window* window, float x, float y,
+ 									int32 workspace = -1);
+@@ -312,6 +313,7 @@ private:
+ 			void				_SendFakeMouseMoved(Window* window = NULL);
+ 
+ 			Screen*				_DetermineScreenFor(BRect frame);
++			void				_UpdateOverlays();
+ 			void				_RebuildClippingForAllWindows(
+ 									BRegion& stillAvailableOnScreen);
+ 			void				_TriggerWindowRedrawing(
+diff --git a/src/servers/app/Window.h b/src/servers/app/Window.h
+index 1f2a329..5640fdd 100644
+--- a/src/servers/app/Window.h
++++ b/src/servers/app/Window.h
+@@ -221,6 +221,12 @@ public:
+ 			void				SetMinimized(bool minimized);
+ 	inline	bool				IsMinimized() const { return fMinimized; }
+ 
++			// Overlay windows (see drawing/OverlayCompositor.h) do not clip
++			// the windows below them and are shown by the compositor.
++			bool				IsOverlay() const { return fIsOverlay; }
++			void				SetOverlay(bool overlay)
++									{ fIsOverlay = overlay; }
++
+ 			void				SetCurrentWorkspace(int32 index)
+ 									{ fCurrentWorkspace = index; fPriorWorkspace = index; }
+ 			int32				CurrentWorkspace() const
+@@ -382,6 +388,7 @@ protected:
+ 			ObjectDeleter<WindowBehaviour>
+ 								fWindowBehaviour;
+ 			ObjectDeleter<View>	fTopView;
++			bool				fIsOverlay = false;
+ 			::ServerWindow*		fWindow;
+ 			ObjectDeleter<DrawingEngine>
+ 								fDrawingEngine;
+diff --git a/src/servers/app/drawing/HWInterface.cpp b/src/servers/app/drawing/HWInterface.cpp
+index 35b431f..85611c4 100644
+--- a/src/servers/app/drawing/HWInterface.cpp
++++ b/src/servers/app/drawing/HWInterface.cpp
+@@ -308,6 +308,18 @@ HWInterface::SetDragBitmap(const ServerBitmap* bitmap,
+ // #pragma mark -
+ 
+ 
++RenderingBuffer*
++HWInterface::_CompositionSource() const
++{
++	if (IsDoubleBuffered() && fCompositor.IsActive()) {
++		RenderingBuffer* composed = fCompositor.ComposedBuffer();
++		if (composed != NULL)
++			return composed;
++	}
++	return DrawingBuffer();
++}
++
++
+ RenderingBuffer*
+ HWInterface::DrawingBuffer() const
+ {
+@@ -371,6 +383,11 @@ HWInterface::CopyBackToFront(const BRect& frame)
+ 		if (IsDoubleBuffered())
+ 			region.Exclude((clipping_rect)_CursorFrame());
+ 
++		// With overlay windows, compose the copied area first; the copy
++		// and the cursor then read from the composed buffer.
++		if (fCompositor.IsActive())
++			fCompositor.Compose(backBuffer, area);
++
+ 		_CopyBackToFront(region);
+ 
+ 		_DrawCursor(area);
+@@ -387,7 +404,7 @@ HWInterface::CopyBackToFront(const BRect& frame)
+ void
+ HWInterface::_CopyBackToFront(/*const*/ BRegion& region)
+ {
+-	RenderingBuffer* backBuffer = BackBuffer();
++	RenderingBuffer* backBuffer = _CompositionSource();
+ 
+ 	uint32 srcBPR = backBuffer->BytesPerRow();
+ 	uint8* src = (uint8*)backBuffer->Bits();
+@@ -535,7 +552,7 @@ HWInterface::RemoveListener(HWInterfaceListener* listener)
+ void
+ HWInterface::_DrawCursor(IntRect area) const
+ {
+-	RenderingBuffer* backBuffer = DrawingBuffer();
++	RenderingBuffer* backBuffer = _CompositionSource();
+ 	if (!backBuffer || !area.IsValid())
+ 		return;
+ 
+diff --git a/src/servers/app/drawing/HWInterface.h b/src/servers/app/drawing/HWInterface.h
+index 65992d5..d72ce4d 100644
+--- a/src/servers/app/drawing/HWInterface.h
++++ b/src/servers/app/drawing/HWInterface.h
+@@ -23,6 +23,7 @@
+ 
+ #include "IntRect.h"
+ #include "MultiLocker.h"
++#include "OverlayCompositor.h"
+ #include "ServerCursor.h"
+ 
+ 
+@@ -173,10 +174,17 @@ public:
+ 			bool				AddListener(HWInterfaceListener* listener);
+ 			void				RemoveListener(HWInterfaceListener* listener);
+ 
++	// Optional overlay compositing (inactive until a layer is set)
++			OverlayCompositor&	Compositor() { return fCompositor; }
++
+ protected:
+ 	// implement this in derived classes
+ 	virtual	void				_DrawCursor(IntRect area) const;
+ 
++	// The buffer copied to the front: the back buffer, or the back buffer
++	// composed with overlay windows while the compositor is active.
++			RenderingBuffer*	_CompositionSource() const;
++
+ 	// does the actual transfer and handles color space conversion
+ 			void				_CopyToFront(uint8* src, uint32 srcBPR, int32 x,
+ 									int32 y, int32 right, int32 bottom) const;
+@@ -245,6 +253,7 @@ protected:
+ 
+ private:
+ 			BList				fListeners;
++			OverlayCompositor	fCompositor;
+ };
+ 
+ #endif // HW_INTERFACE_H
+diff --git a/src/servers/app/drawing/Jamfile b/src/servers/app/drawing/Jamfile
+index 3b41d75..057866d 100644
+--- a/src/servers/app/drawing/Jamfile
++++ b/src/servers/app/drawing/Jamfile
+@@ -31,6 +31,8 @@ StaticLibrary libasdrawing.a :
+ 	BitmapHWInterface.cpp
+ 	BBitmapBuffer.cpp
+ 	HWInterface.cpp
++	OverlayCompose.cpp
++	OverlayCompositor.cpp
+ ;
+ 
+ SubInclude HAIKU_TOP src servers app drawing Painter ;
+diff --git a/src/servers/app/drawing/LuminaOverlayApi.h b/src/servers/app/drawing/LuminaOverlayApi.h
+new file mode 100644
+index 0000000..cef33a0
+--- /dev/null
++++ b/src/servers/app/drawing/LuminaOverlayApi.h
+@@ -0,0 +1,60 @@
++/*
++ * Copyright 2026, Lumina for Haiku contributors.
++ * Distributed under the terms of the MIT License.
++ *
++ * The C interface of app_server's optional overlay compositor (added by
++ * Lumina's patch set, see drawing/OverlayCompositor.h). An identical copy
++ * of this header ships with Lumina's Window Engine, which resolves
++ * lumina_overlay_get_api() at run time with get_image_symbol(): on an
++ * app_server without the patch the symbol is simply absent and the engine
++ * keeps working without overlays.
++ *
++ * Compatibility rules: `version` only grows; new functions are appended to
++ * lumina_overlay_api; lumina_overlay_params carries its own `size` and new
++ * fields are appended.
++ */
++#ifndef LUMINA_OVERLAY_API_H
++#define LUMINA_OVERLAY_API_H
++
++#include <GraphicsDefs.h>
++#include <Rect.h>
++#include <SupportDefs.h>
++
++class Desktop;
++class Window;
++
++#define LUMINA_OVERLAY_API_VERSION	1
++#define LUMINA_OVERLAY_API_SYMBOL	"lumina_overlay_get_api"
++
++struct lumina_overlay_params {
++	uint32		size;				// sizeof(lumina_overlay_params)
++	float		opacity;			// content opacity 0..1
++	int32		blur_radius;		// backdrop blur, screen pixels
++	int32		downsample;			// 1, 2 or 4
++	rgb_color	tint;
++	float		tint_amount;		// 0..1
++	float		corner_radius;
++	int32		shadow_radius;
++	float		shadow_opacity;
++	int32		shadow_offset_y;
++};
++
++struct lumina_overlay_api {
++	uint32		version;			// LUMINA_OVERLAY_API_VERSION
++	// Makes `window` an overlay with `params`, or a normal window again
++	// (params == NULL). The caller may hold the desktop window lock (it is
++	// recursive); the window's first child view must carry a 32-bit view
++	// bitmap — that bitmap is the overlay's content.
++	status_t	(*set_overlay)(Desktop* desktop, Window* window,
++					const lumina_overlay_params* params);
++	// The overlay's bitmap content changed inside `frame` (screen coords).
++	void		(*damage)(Desktop* desktop, BRect frame);
++	bool		(*is_overlay)(Window* window);
++};
++
++typedef const lumina_overlay_api* (*lumina_overlay_get_api_func)();
++
++extern "C" __attribute__((visibility("default")))
++const lumina_overlay_api* lumina_overlay_get_api();
++
++#endif	// LUMINA_OVERLAY_API_H
+diff --git a/src/servers/app/drawing/OverlayCompose.cpp b/src/servers/app/drawing/OverlayCompose.cpp
+new file mode 100644
+index 0000000..cf64e21
+--- /dev/null
++++ b/src/servers/app/drawing/OverlayCompose.cpp
+@@ -0,0 +1,350 @@
++/*
++ * Copyright 2026, Lumina for Haiku contributors.
++ * Distributed under the terms of the MIT License.
++ */
++#include "OverlayCompose.h"
++
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++
++namespace overlay_compose {
++
++namespace {
++
++inline uint8_t*
++PixelAt(const Surface& s, int x, int y)
++{
++	return s.bits + size_t(y) * size_t(s.stride) + size_t(x) * 4;
++}
++
++
++// Coverage (0..1) of pixel (x, y) by a rounded rectangle, antialiased over
++// one pixel. Only the corner squares can be partial.
++float
++RoundedCoverage(const Rect& r, float radius, int x, int y)
++{
++	if (x < r.left || x > r.right || y < r.top || y > r.bottom)
++		return 0.0f;
++	if (radius <= 0)
++		return 1.0f;
++	float cx, cy;
++	float fx = x + 0.5f, fy = y + 0.5f;
++	float left = r.left + radius, right = r.right + 1 - radius;
++	float top = r.top + radius, bottom = r.bottom + 1 - radius;
++	if (fx < left)
++		cx = left;
++	else if (fx > right)
++		cx = right;
++	else
++		return 1.0f;
++	if (fy < top)
++		cy = top;
++	else if (fy > bottom)
++		cy = bottom;
++	else
++		return 1.0f;
++	float d = std::sqrt((fx - cx) * (fx - cx) + (fy - cy) * (fy - cy));
++	return std::min(std::max(radius - d + 0.5f, 0.0f), 1.0f);
++}
++
++
++// Distance from (x, y) to a rounded rectangle (0 inside).
++float
++RoundedDistance(const Rect& r, float radius, int x, int y)
++{
++	float fx = x + 0.5f, fy = y + 0.5f;
++	float left = r.left + radius, right = r.right + 1 - radius;
++	float top = r.top + radius, bottom = r.bottom + 1 - radius;
++	float dx = std::max(std::max(left - fx, fx - right), 0.0f);
++	float dy = std::max(std::max(top - fy, fy - bottom), 0.0f);
++	return std::max(std::sqrt(dx * dx + dy * dy) - radius, 0.0f);
++}
++
++
++// One horizontal + vertical box blur pass over a w x h BGRA buffer with
++// edge clamping. `line` is scratch of max(w, h) * 4 ints.
++void
++BoxBlurPass(uint8_t* bits, int w, int h, int radius, std::vector<int>& line)
++{
++	if (radius <= 0)
++		return;
++	int window = 2 * radius + 1;
++	line.resize(size_t(std::max(w, h)) * 3);
++	// horizontal
++	for (int y = 0; y < h; y++) {
++		uint8_t* row = bits + size_t(y) * w * 4;
++		int sum[3] = {0, 0, 0};
++		for (int i = -radius; i <= radius; i++) {
++			const uint8_t* p = row + std::min(std::max(i, 0), w - 1) * 4;
++			sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2];
++		}
++		for (int x = 0; x < w; x++) {
++			line[x * 3] = sum[0];
++			line[x * 3 + 1] = sum[1];
++			line[x * 3 + 2] = sum[2];
++			const uint8_t* add = row + std::min(x + radius + 1, w - 1) * 4;
++			const uint8_t* sub = row + std::max(x - radius, 0) * 4;
++			sum[0] += add[0] - sub[0];
++			sum[1] += add[1] - sub[1];
++			sum[2] += add[2] - sub[2];
++		}
++		for (int x = 0; x < w; x++) {
++			row[x * 4] = uint8_t(line[x * 3] / window);
++			row[x * 4 + 1] = uint8_t(line[x * 3 + 1] / window);
++			row[x * 4 + 2] = uint8_t(line[x * 3 + 2] / window);
++		}
++	}
++	// vertical
++	for (int x = 0; x < w; x++) {
++		uint8_t* col = bits + size_t(x) * 4;
++		size_t stride = size_t(w) * 4;
++		int sum[3] = {0, 0, 0};
++		for (int i = -radius; i <= radius; i++) {
++			const uint8_t* p = col + std::min(std::max(i, 0), h - 1) * stride;
++			sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2];
++		}
++		for (int y = 0; y < h; y++) {
++			line[y * 3] = sum[0];
++			line[y * 3 + 1] = sum[1];
++			line[y * 3 + 2] = sum[2];
++			const uint8_t* add = col + std::min(y + radius + 1, h - 1) * stride;
++			const uint8_t* sub = col + std::max(y - radius, 0) * stride;
++			sum[0] += add[0] - sub[0];
++			sum[1] += add[1] - sub[1];
++			sum[2] += add[2] - sub[2];
++		}
++		for (int y = 0; y < h; y++) {
++			col[y * stride] = uint8_t(line[y * 3] / window);
++			col[y * stride + 1] = uint8_t(line[y * 3 + 1] / window);
++			col[y * stride + 2] = uint8_t(line[y * 3 + 2] / window);
++		}
++	}
++}
++
++}	// namespace
++
++
++Rect
++Intersect(const Rect& a, const Rect& b)
++{
++	Rect r;
++	r.left = std::max(a.left, b.left);
++	r.top = std::max(a.top, b.top);
++	r.right = std::min(a.right, b.right);
++	r.bottom = std::min(a.bottom, b.bottom);
++	return r;
++}
++
++
++Rect
++Inset(const Rect& r, int by)
++{
++	Rect out = r;
++	out.left += by;
++	out.top += by;
++	out.right -= by;
++	out.bottom -= by;
++	return out;
++}
++
++
++int
++Margin(const Layer& layer)
++{
++	if (layer.shadowRadius <= 0 || layer.shadowOpacity <= 0)
++		return 0;
++	return layer.shadowRadius + std::abs(layer.shadowOffsetY);
++}
++
++
++Rect
++Footprint(const Layer& layer)
++{
++	return Inset(layer.frame, -Margin(layer));
++}
++
++
++void
++Compose(const Surface& back, const Surface& out, Rect area,
++	const Layer* layers, int count, std::vector<uint8_t>& scratch)
++{
++	Rect screen{0, 0, back.width - 1, back.height - 1};
++	area = Intersect(area, screen);
++	if (!area.IsValid())
++		return;
++
++	// 1. Start from what the ordinary windows drew.
++	for (int y = area.top; y <= area.bottom; y++) {
++		memcpy(PixelAt(out, area.left, y), PixelAt(back, area.left, y),
++			size_t(area.Width()) * 4);
++	}
++
++	std::vector<int> line;
++	for (int i = 0; i < count; i++) {
++		const Layer& layer = layers[i];
++		if (!layer.frame.IsValid()
++			|| !Intersect(Footprint(layer), area).IsValid())
++			continue;
++
++		// 2. Shadow: darken around the (rounded) frame, falling off with
++		// distance. Inside the frame the layer covers it anyway.
++		if (Margin(layer) > 0) {
++			Rect shadowFrame = layer.frame;
++			shadowFrame.top += layer.shadowOffsetY;
++			shadowFrame.bottom += layer.shadowOffsetY;
++			Rect s = Intersect(Footprint(layer), area);
++			for (int y = s.top; y <= s.bottom; y++) {
++				uint8_t* p = PixelAt(out, s.left, y);
++				for (int x = s.left; x <= s.right; x++, p += 4) {
++					if (RoundedCoverage(layer.frame, layer.cornerRadius, x, y)
++							>= 1.0f)
++						continue;
++					float d = RoundedDistance(shadowFrame, layer.cornerRadius,
++						x, y);
++					if (d >= layer.shadowRadius)
++						continue;
++					float t = 1.0f - d / layer.shadowRadius;
++					float darken = layer.shadowOpacity * t * t;
++					// Under a partially covered corner pixel only the
++					// uncovered part shows the shadow.
++					darken *= 1.0f - RoundedCoverage(layer.frame,
++						layer.cornerRadius, x, y);
++					int keep = int((1.0f - darken) * 256);
++					p[0] = uint8_t((p[0] * keep) >> 8);
++					p[1] = uint8_t((p[1] * keep) >> 8);
++					p[2] = uint8_t((p[2] * keep) >> 8);
++				}
++			}
++		}
++
++		Rect body = Intersect(layer.frame, area);
++		if (!body.IsValid())
++			continue;
++
++		// 3. Backdrop: blur (and tint) what is under the layer, optionally
++		// at 1/f resolution on a screen-aligned grid. A margin of
++		// passes*radius (+1 for bilinear) is sampled around the area so a
++		// partial composition matches the full one exactly: edge clamping
++		// travels `radius` per pass and never reaches the needed pixels.
++		int f = layer.downsample == 2 || layer.downsample == 4
++			? layer.downsample : 1;
++		bool hasBackdrop = layer.blurRadius > 0 || layer.tintAmount > 0;
++		Rect low;			// low-res sample rect (low-res coordinates)
++		int lowW = 0;
++		if (hasBackdrop) {
++			int radius = layer.blurRadius > 0
++				? std::max(1, layer.blurRadius / f) : 0;
++			int reach = radius * kBlurPasses + (f > 1 ? 1 : 0);
++			Rect lowScreen{0, 0, (back.width - 1) / f, (back.height - 1) / f};
++			Rect lowBody{body.left / f, body.top / f, body.right / f,
++				body.bottom / f};
++			low = Intersect(Inset(lowBody, -reach), lowScreen);
++			lowW = low.Width();
++			int lowH = low.Height();
++			scratch.resize(size_t(lowW) * lowH * 4);
++			for (int ly = 0; ly < lowH; ly++) {
++				for (int lx = 0; lx < lowW; lx++) {
++					int x0 = (low.left + lx) * f, y0 = (low.top + ly) * f;
++					int x1 = std::min(x0 + f, back.width);
++					int y1 = std::min(y0 + f, back.height);
++					int sum[3] = {0, 0, 0}, n = 0;
++					for (int y = y0; y < y1; y++) {
++						const uint8_t* q = PixelAt(back, x0, y);
++						for (int x = x0; x < x1; x++, q += 4) {
++							sum[0] += q[0]; sum[1] += q[1]; sum[2] += q[2];
++							n++;
++						}
++					}
++					uint8_t* d = &scratch[(size_t(ly) * lowW + lx) * 4];
++					d[0] = uint8_t(sum[0] / n);
++					d[1] = uint8_t(sum[1] / n);
++					d[2] = uint8_t(sum[2] / n);
++					d[3] = 255;
++				}
++			}
++			for (int pass = 0; pass < kBlurPasses; pass++)
++				BoxBlurPass(scratch.data(), lowW, lowH, radius, line);
++			if (layer.tintAmount > 0) {
++				int t8 = int(std::min(std::max(layer.tintAmount, 0.0f), 1.0f)
++					* 256);
++				for (size_t p = 0; p < scratch.size(); p += 4) {
++					scratch[p] = uint8_t((scratch[p] * (256 - t8)
++						+ layer.tintB * t8) >> 8);
++					scratch[p + 1] = uint8_t((scratch[p + 1] * (256 - t8)
++						+ layer.tintG * t8) >> 8);
++					scratch[p + 2] = uint8_t((scratch[p + 2] * (256 - t8)
++						+ layer.tintR * t8) >> 8);
++				}
++			}
++		}
++		// Backdrop colour at screen pixel (x, y): direct at f = 1, bilinear
++		// in global low-res coordinates otherwise (clamped to the screen's
++		// low-res bounds only, never to the sample rect).
++		auto backdropAt = [&](int x, int y, int& b, int& g, int& r) {
++			if (f == 1) {
++				const uint8_t* q = &scratch[(size_t(y - low.top) * lowW
++					+ (x - low.left)) * 4];
++				b = q[0]; g = q[1]; r = q[2];
++				return;
++			}
++			int maxX = (back.width - 1) / f, maxY = (back.height - 1) / f;
++			// 8-bit fixed point: u = (x + 0.5) / f - 0.5
++			int u = ((2 * x + 1) * 256) / (2 * f) - 128;
++			int v = ((2 * y + 1) * 256) / (2 * f) - 128;
++			int i0 = u >> 8, j0 = v >> 8;
++			int fu = u & 255, fv = v & 255;
++			if (u < 0) { i0 = 0; fu = 0; }
++			if (v < 0) { j0 = 0; fv = 0; }
++			int i1 = std::min(i0 + 1, maxX), j1 = std::min(j0 + 1, maxY);
++			i0 = std::min(i0, maxX);
++			j0 = std::min(j0, maxY);
++			auto px = [&](int i, int j) {
++				return &scratch[(size_t(j - low.top) * lowW + (i - low.left))
++					* 4];
++			};
++			const uint8_t* a = px(i0, j0);
++			const uint8_t* bb = px(i1, j0);
++			const uint8_t* c = px(i0, j1);
++			const uint8_t* d = px(i1, j1);
++			int out[3];
++			for (int k = 0; k < 3; k++) {
++				int top = a[k] * (256 - fu) + bb[k] * fu;
++				int bottom = c[k] * (256 - fu) + d[k] * fu;
++				out[k] = (top * (256 - fv) + bottom * fv) >> 16;
++			}
++			b = out[0]; g = out[1]; r = out[2];
++		};
++
++		// 4. Body: backdrop, then content over it, through the rounded mask.
++		int opacity8 = int(std::min(std::max(layer.opacity, 0.0f), 1.0f) * 256);
++		for (int y = body.top; y <= body.bottom; y++) {
++			uint8_t* p = PixelAt(out, body.left, y);
++			for (int x = body.left; x <= body.right; x++, p += 4) {
++				float coverage = RoundedCoverage(layer.frame,
++					layer.cornerRadius, x, y);
++				if (coverage <= 0)
++					continue;
++				int r = p[2], g = p[1], b = p[0];
++				if (hasBackdrop)
++					backdropAt(x, y, b, g, r);
++				if (layer.bits != nullptr) {
++					const uint8_t* c = layer.bits
++						+ size_t(y - layer.frame.top) * layer.stride
++						+ size_t(x - layer.frame.left) * 4;
++					int a = (c[3] * opacity8) >> 8;
++					b = (b * (256 - a) + c[0] * a) >> 8;
++					g = (g * (256 - a) + c[1] * a) >> 8;
++					r = (r * (256 - a) + c[2] * a) >> 8;
++				}
++				int k = int(coverage * 256);
++				p[0] = uint8_t((p[0] * (256 - k) + b * k) >> 8);
++				p[1] = uint8_t((p[1] * (256 - k) + g * k) >> 8);
++				p[2] = uint8_t((p[2] * (256 - k) + r * k) >> 8);
++				p[3] = 255;
++			}
++		}
++	}
++}
++
++}	// namespace overlay_compose
+diff --git a/src/servers/app/drawing/OverlayCompose.h b/src/servers/app/drawing/OverlayCompose.h
+new file mode 100644
+index 0000000..42361e4
+--- /dev/null
++++ b/src/servers/app/drawing/OverlayCompose.h
+@@ -0,0 +1,90 @@
++/*
++ * Copyright 2026, Lumina for Haiku contributors.
++ * Distributed under the terms of the MIT License.
++ *
++ * OverlayCompose: the pixel core of the optional app_server overlay
++ * compositor (Level 3, patches/haiku/). Self-contained on purpose — no
++ * Lumina or Haiku headers — so the very same file is copied into app_server
++ * by patches/haiku/apply.sh and unit-tested here on any host.
++ *
++ * Model
++ *   back   app_server's back buffer: what every ordinary window drew. With
++ *          the patch, overlay windows do not clip the windows below them,
++ *          so `back` holds the real content *under* each overlay.
++ *   layers overlay windows, back to front: frame, straight-alpha BGRA
++ *          content, opacity, backdrop blur radius, tint, rounded corners
++ *          and a soft drop shadow.
++ *   out    the composed image that is sent to the front buffer.
++ *
++ * Compose() produces out = back + layers for one rectangle. Composing any
++ * sub-rectangle yields exactly the pixels a full-screen composition would
++ * (blur samples a margin around the area), so app_server can compose only
++ * the rectangles it is copying to the screen anyway — the cost scales with
++ * damage, not with screen size, and idle cost is zero.
++ */
++#ifndef LUMINA_OVERLAY_COMPOSE_H
++#define LUMINA_OVERLAY_COMPOSE_H
++
++#include <cstdint>
++#include <vector>
++
++namespace overlay_compose {
++
++// 32-bit B,G,R,A pixels (B_RGBA32/B_RGB32 byte order).
++struct Surface {
++	uint8_t*	bits = nullptr;
++	int			width = 0;
++	int			height = 0;
++	int			stride = 0;		// bytes per row
++};
++
++// Inclusive integer rectangle (app_server clipping_rect convention).
++struct Rect {
++	int		left = 0;
++	int		top = 0;
++	int		right = -1;
++	int		bottom = -1;
++
++	bool IsValid() const { return right >= left && bottom >= top; }
++	int Width() const { return right - left + 1; }
++	int Height() const { return bottom - top + 1; }
++};
++
++Rect Intersect(const Rect& a, const Rect& b);
++Rect Inset(const Rect& r, int by);	// negative grows
++
++struct Layer {
++	Rect			frame;					// screen coordinates
++	const uint8_t*	bits = nullptr;			// frame-sized content, straight
++	int				stride = 0;				// alpha; nullptr = no content
++	float			opacity = 1.0f;			// content opacity 0..1
++	int				blurRadius = 0;			// backdrop blur (box radius, in
++											// screen pixels)
++	int				downsample = 1;			// blur at 1/n resolution (1, 2, 4);
++											// blocks align to a global grid,
++											// so partial = full still holds
++	uint8_t			tintB = 0, tintG = 0, tintR = 0;
++	float			tintAmount = 0.0f;		// backdrop tint 0..1
++	float			cornerRadius = 0.0f;	// antialiased rounded corners
++	int				shadowRadius = 0;		// soft shadow extent (pixels)
++	float			shadowOpacity = 0.0f;	// 0..1 at the window edge
++	int				shadowOffsetY = 0;
++};
++
++// How far outside its frame a layer changes pixels (shadow).
++int Margin(const Layer& layer);
++// The screen rectangle a layer affects.
++Rect Footprint(const Layer& layer);
++
++// Composes `area` of out from back and the layers. back and out must have
++// the same size and may not alias. `scratch` is reused between calls
++// (keep one per thread).
++void Compose(const Surface& back, const Surface& out, Rect area,
++	const Layer* layers, int count, std::vector<uint8_t>& scratch);
++
++// Number of box-blur passes used for the backdrop (Gaussian approximation).
++constexpr int kBlurPasses = 3;
++
++}	// namespace overlay_compose
++
++#endif
+diff --git a/src/servers/app/drawing/OverlayCompositor.cpp b/src/servers/app/drawing/OverlayCompositor.cpp
+new file mode 100644
+index 0000000..a3df9f1
+--- /dev/null
++++ b/src/servers/app/drawing/OverlayCompositor.cpp
+@@ -0,0 +1,325 @@
++/*
++ * Copyright 2026, Lumina for Haiku contributors.
++ * Distributed under the terms of the MIT License.
++ */
++#include "OverlayCompositor.h"
++
++#include <string.h>
++
++#include <Autolock.h>
++
++#include "Desktop.h"
++#include "DrawingEngine.h"
++#include "HWInterface.h"
++#include "MallocBuffer.h"
++#include "RenderingBuffer.h"
++#include "ServerBitmap.h"
++#include "View.h"
++#include "Window.h"
++
++
++namespace {
++
++overlay_compose::Rect
++ToRect(const BRect& r)
++{
++	overlay_compose::Rect out;
++	out.left = (int)floorf(r.left);
++	out.top = (int)floorf(r.top);
++	out.right = (int)floorf(r.right);
++	out.bottom = (int)floorf(r.bottom);
++	return out;
++}
++
++
++overlay_compose::Surface
++ToSurface(RenderingBuffer* buffer)
++{
++	overlay_compose::Surface surface;
++	surface.bits = (uint8*)buffer->Bits();
++	surface.width = buffer->Width();
++	surface.height = buffer->Height();
++	surface.stride = buffer->BytesPerRow();
++	return surface;
++}
++
++
++ServerBitmap*
++ContentOf(Window* window)
++{
++	View* top = window->TopView();
++	View* view = top != NULL ? top->FirstChild() : NULL;
++	ServerBitmap* bitmap = view != NULL ? view->ViewBitmap() : NULL;
++	if (bitmap == NULL || (bitmap->ColorSpace() != B_RGBA32
++			&& bitmap->ColorSpace() != B_RGB32))
++		return NULL;
++	return bitmap;
++}
++
++}	// namespace
++
++
++OverlayCompositor::OverlayCompositor()
++	:
++	fLock("overlay compositor"),
++	fComposed(NULL),
++	fComposedValid(false),
++	fActive(false)
++{
++}
++
++
++OverlayCompositor::~OverlayCompositor()
++{
++	delete fComposed;
++}
++
++
++void
++OverlayCompositor::_Snapshot(Layer& layer)
++{
++	layer.frame = layer.window->Frame();
++	layer.visible = layer.window->IsVisible();
++	ServerBitmap* content = ContentOf(layer.window);
++	layer.content.SetTo(content);
++}
++
++
++BRect
++OverlayCompositor::_Footprint(const Layer& layer) const
++{
++	int32 margin = 0;
++	if (layer.params.shadow_radius > 0 && layer.params.shadow_opacity > 0) {
++		margin = layer.params.shadow_radius
++			+ abs(layer.params.shadow_offset_y);
++	}
++	return layer.frame.InsetByCopy(-margin, -margin);
++}
++
++
++status_t
++OverlayCompositor::SetLayer(Window* window,
++	const lumina_overlay_params& params, BRegion& damage)
++{
++	if (window == NULL || params.size < sizeof(lumina_overlay_params))
++		return B_BAD_VALUE;
++	BAutolock _(fLock);
++	for (Layer& layer : fLayers) {
++		if (layer.window == window) {
++			damage.Include(_Footprint(layer));
++			layer.params = params;
++			_Snapshot(layer);
++			damage.Include(_Footprint(layer));
++			return B_OK;
++		}
++	}
++	Layer layer;
++	layer.window = window;
++	layer.params = params;
++	_Snapshot(layer);
++	fLayers.push_back(layer);
++	damage.Include(_Footprint(layer));
++	fActive = true;
++	return B_OK;
++}
++
++
++bool
++OverlayCompositor::RemoveLayer(Window* window, BRegion& damage)
++{
++	BAutolock _(fLock);
++	for (size_t i = 0; i < fLayers.size(); i++) {
++		if (fLayers[i].window != window)
++			continue;
++		damage.Include(_Footprint(fLayers[i]));
++		fLayers.erase(fLayers.begin() + i);
++		fActive = !fLayers.empty();
++		if (!fActive) {
++			// Nothing to compose: copy straight from the back buffer again
++			// and give the memory back.
++			delete fComposed;
++			fComposed = NULL;
++			fComposedValid = false;
++		}
++		return true;
++	}
++	return false;
++}
++
++
++void
++OverlayCompositor::Update(BRegion& damage)
++{
++	if (!fActive)
++		return;
++	BAutolock _(fLock);
++	for (Layer& layer : fLayers) {
++		BRect frame = layer.window->Frame();
++		bool visible = layer.window->IsVisible();
++		ServerBitmap* content = ContentOf(layer.window);
++		if (frame == layer.frame && visible == layer.visible
++			&& content == layer.content.Get())
++			continue;
++		if (layer.visible)
++			damage.Include(_Footprint(layer));
++		_Snapshot(layer);
++		if (layer.visible)
++			damage.Include(_Footprint(layer));
++	}
++}
++
++
++void
++OverlayCompositor::_EnsureComposed(RenderingBuffer* back)
++{
++	if (fComposed != NULL && (fComposed->Width() != back->Width()
++			|| fComposed->Height() != back->Height())) {
++		delete fComposed;
++		fComposed = NULL;
++	}
++	if (fComposed == NULL) {
++		fComposed = new(std::nothrow) MallocBuffer(back->Width(),
++			back->Height());
++		if (fComposed != NULL && fComposed->InitCheck() != B_OK) {
++			delete fComposed;
++			fComposed = NULL;
++		}
++		fComposedValid = false;
++	}
++	if (fComposed != NULL && !fComposedValid) {
++		// The composed buffer must be valid everywhere the cursor code may
++		// read it: start from a full copy.
++		memcpy(fComposed->Bits(), back->Bits(),
++			back->BytesPerRow() * back->Height());
++		fComposedValid = true;
++	}
++}
++
++
++void
++OverlayCompositor::Compose(RenderingBuffer* back, const IntRect& area)
++{
++	if (!fActive || back == NULL || back->ColorSpace() != B_RGBA32)
++		return;
++	BAutolock _(fLock);
++	_EnsureComposed(back);
++	if (fComposed == NULL)
++		return;
++
++	std::vector<overlay_compose::Layer> layers;
++	layers.reserve(fLayers.size());
++	// fLayers is in registration order; app_server's z-order among overlays
++	// is not needed for the intended use (non-overlapping panels/cards).
++	for (const Layer& layer : fLayers) {
++		if (!layer.visible)
++			continue;
++		overlay_compose::Layer l;
++		l.frame = ToRect(layer.frame);
++		ServerBitmap* content = layer.content.Get();
++		if (content != NULL && content->Width() >= l.frame.Width()
++			&& content->Height() >= l.frame.Height()) {
++			l.bits = content->Bits();
++			l.stride = content->BytesPerRow();
++		}
++		l.opacity = layer.params.opacity;
++		l.blurRadius = layer.params.blur_radius;
++		l.downsample = layer.params.downsample;
++		l.tintR = layer.params.tint.red;
++		l.tintG = layer.params.tint.green;
++		l.tintB = layer.params.tint.blue;
++		l.tintAmount = layer.params.tint_amount;
++		l.cornerRadius = layer.params.corner_radius;
++		l.shadowRadius = layer.params.shadow_radius;
++		l.shadowOpacity = layer.params.shadow_opacity;
++		l.shadowOffsetY = layer.params.shadow_offset_y;
++		layers.push_back(l);
++	}
++	overlay_compose::Rect rect;
++	rect.left = area.left;
++	rect.top = area.top;
++	rect.right = area.right;
++	rect.bottom = area.bottom;
++	overlay_compose::Compose(ToSurface(back), ToSurface(fComposed), rect,
++		layers.data(), (int)layers.size(), fScratch);
++}
++
++
++RenderingBuffer*
++OverlayCompositor::ComposedBuffer() const
++{
++	return fActive && fComposedValid ? fComposed : NULL;
++}
++
++
++// #pragma mark - C API
++
++
++namespace {
++
++void
++Recompose(Desktop* desktop, const BRegion& damage)
++{
++	if (damage.CountRects() == 0)
++		return;
++	DrawingEngine* engine = desktop->GetDrawingEngine();
++	if (engine->LockParallelAccess()) {
++		desktop->HWInterface()->InvalidateRegion(damage);
++		engine->UnlockParallelAccess();
++	}
++}
++
++
++status_t
++api_set_overlay(Desktop* desktop, Window* window,
++	const lumina_overlay_params* params)
++{
++	if (desktop == NULL || window == NULL)
++		return B_BAD_VALUE;
++	if (!desktop->LockAllWindows())
++		return B_ERROR;
++	BRegion damage;
++	status_t status = B_OK;
++	OverlayCompositor& compositor = desktop->HWInterface()->Compositor();
++	if (params != NULL) {
++		status = compositor.SetLayer(window, *params, damage);
++		if (status == B_OK)
++			desktop->SetWindowOverlay(window, true);
++	} else if (compositor.RemoveLayer(window, damage))
++		desktop->SetWindowOverlay(window, false);
++	desktop->UnlockAllWindows();
++	Recompose(desktop, damage);
++	return status;
++}
++
++
++void
++api_damage(Desktop* desktop, BRect frame)
++{
++	if (desktop == NULL || !frame.IsValid())
++		return;
++	Recompose(desktop, BRegion(frame));
++}
++
++
++bool
++api_is_overlay(Window* window)
++{
++	return window != NULL && window->IsOverlay();
++}
++
++
++const lumina_overlay_api kApi = {
++	LUMINA_OVERLAY_API_VERSION,
++	api_set_overlay,
++	api_damage,
++	api_is_overlay
++};
++
++}	// namespace
++
++
++const lumina_overlay_api*
++lumina_overlay_get_api()
++{
++	return &kApi;
++}
+diff --git a/src/servers/app/drawing/OverlayCompositor.h b/src/servers/app/drawing/OverlayCompositor.h
+new file mode 100644
+index 0000000..945a8f3
+--- /dev/null
++++ b/src/servers/app/drawing/OverlayCompositor.h
+@@ -0,0 +1,86 @@
++/*
++ * Copyright 2026, Lumina for Haiku contributors.
++ * Distributed under the terms of the MIT License.
++ *
++ * OverlayCompositor: optional, minimal compositing for a few "overlay"
++ * windows (translucent panels, glass, soft shadows, true fades).
++ *
++ * Ordinary windows are untouched and keep drawing straight into the back
++ * buffer. An overlay window does not clip the windows below it and never
++ * draws into the back buffer itself (its visible region is empty); its
++ * pixels come from the view bitmap of its first child view. When the back
++ * buffer is copied to the front buffer (HWInterface::CopyBackToFront — the
++ * single path every pixel takes to the screen) the copied rectangles are
++ * composed with the overlays first. With no overlay registered nothing
++ * changes and nothing is allocated.
++ *
++ * Clients reach it through a small, versioned C API resolved at run time
++ * (lumina_overlay_get_api()), so add-ons built for a stock app_server keep
++ * loading on it and simply find no compositor.
++ */
++#ifndef OVERLAY_COMPOSITOR_H
++#define OVERLAY_COMPOSITOR_H
++
++#include <GraphicsDefs.h>
++#include <Locker.h>
++#include <Rect.h>
++#include <Referenceable.h>
++#include <Region.h>
++
++#include <vector>
++
++#include "IntRect.h"
++#include "LuminaOverlayApi.h"
++#include "OverlayCompose.h"
++
++class Desktop;
++class MallocBuffer;
++class RenderingBuffer;
++class ServerBitmap;
++class Window;
++
++
++class OverlayCompositor {
++public:
++								OverlayCompositor();
++								~OverlayCompositor();
++
++			// Called with the desktop window lock held (write).
++			status_t			SetLayer(Window* window,
++									const lumina_overlay_params& params,
++									BRegion& damage);
++			bool				RemoveLayer(Window* window, BRegion& damage);
++			// Re-reads frames/bitmaps of all layers (after moves, resizes,
++			// show/hide); returns old+new footprints of changed layers.
++			void				Update(BRegion& damage);
++
++			bool				IsActive() const { return fActive; }
++
++			// HWInterface side (HWInterface lock held, any mode).
++			// Composes `area` of the back buffer into the composed buffer.
++			void				Compose(RenderingBuffer* back,
++									const IntRect& area);
++			RenderingBuffer*	ComposedBuffer() const;
++
++private:
++			struct Layer {
++				Window*						window;
++				BRect						frame;
++				BReference<ServerBitmap>	content;
++				lumina_overlay_params		params;
++				bool						visible;
++			};
++
++			void				_Snapshot(Layer& layer);
++			BRect				_Footprint(const Layer& layer) const;
++			void				_EnsureComposed(RenderingBuffer* back);
++
++			BLocker				fLock;
++			std::vector<Layer>	fLayers;
++			MallocBuffer*		fComposed;
++			bool				fComposedValid;
++			bool				fActive;
++			std::vector<uint8>	fScratch;
++};
++
++#endif	// OVERLAY_COMPOSITOR_H

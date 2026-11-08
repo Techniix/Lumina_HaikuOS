@@ -1,5 +1,6 @@
 lumina_haiku_executable(lumina_server
 	SOURCES ServerApp.cpp WindowRegistry.cpp EngineClock.cpp EffectsController.cpp
+		LifecycleProxies.cpp
 	LIBS liblumina lumina_core ${LUMINA_LIB_BE}
 	RDEF lumina_server.rdef
 )

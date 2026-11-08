@@ -30,6 +30,7 @@
 #include <lumina/Profile.h>
 #include <lumina/Rules.h>
 
+#include "LifecycleProxies.h"
 #include "WindowRegistry.h"
 
 class BMessageRunner;
@@ -66,6 +67,8 @@ private:
 	void _ApplyDeskbarPolicy();
 	void _ApplyEngineSelection();
 	void _ConfigureEngine();
+	void _ConfigureLifecycle(Value& engineConfig);
+	void _ApplyCursorTheme();
 	void _ProbeEngine();
 	void _CheckEngineHealth();
 	void _SyncPanels();
@@ -109,6 +112,9 @@ private:
 	haiku::EngineLink*	fEngine;
 	EngineClock*		fClock;
 	EffectsController*	fEffects;
+	LifecycleProxies	fProxies;
+	bool				fLifecycleLive;	// proxies registered with the engine
+	std::string			fCursorSet;		// applied CursorSet file ("" = stock)
 	bool				fEngineLive;
 	BString				fEngineReason;
 

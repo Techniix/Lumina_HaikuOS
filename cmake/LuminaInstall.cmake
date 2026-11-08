@@ -10,6 +10,8 @@ install(PROGRAMS $<TARGET_FILE:LuminaMode> DESTINATION preferences
 	RENAME "Lumina Mode")
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/data/personalities
 	DESTINATION data/Lumina)
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/data/cursors
+	DESTINATION data/Lumina)
 
 if(NOT LUMINA_SERVER_PATH)
 	set(LUMINA_SERVER_PATH "${CMAKE_INSTALL_PREFIX}/${LUMINA_APPS_DIR}/lumina_server")

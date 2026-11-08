@@ -22,6 +22,7 @@
 #include <lumina/Rules.h>
 #include <lumina/anim/Easing.h>
 #include <lumina/fx/Glass.h>
+#include <lumina/haiku/CursorThemes.h>
 #include <lumina/haiku/EngineLink.h>
 #include <lumina/haiku/LuminaClient.h>
 #include <lumina/haiku/MessageCodec.h>
@@ -69,6 +70,11 @@ const char* kUsage =
 "  engine move <token> <l> <t> <r> <b>\n"
 "  engine animate <token> <l> <t> <r> <b> [ms] [curve]\n"
 "  engine snap <token> <zone>     e.g. left-half, top-right-quarter, maximize\n"
+"\n"
+"Cursor themes\n"
+"  cursors                        list installed cursor themes\n"
+"  cursors check <name>           build the theme and report problems\n"
+"  cursors use <name>|stock       set appearance.cursorTheme\n"
 "\n"
 "Diagnostics\n"
 "  diag                           recent server log, counters, effective config\n"
@@ -484,6 +490,54 @@ CmdBenchGlass(int argc, char** argv)
 }	// namespace
 
 
+
+int
+CmdCursors(int argc, char** argv)
+{
+	using namespace lumina::haiku;
+	if (argc < 3) {
+		std::vector<std::string> names = CursorThemes::List();
+		if (names.empty())
+			printf("no cursor themes installed (searched:");
+		else
+			printf("cursor themes (searched:");
+		for (const std::string& dir : CursorThemes::SearchDirs())
+			printf(" %s", dir.c_str());
+		printf(")\n");
+		for (const std::string& name : names)
+			printf("  %s\n", name.c_str());
+		return 0;
+	}
+	if (strcmp(argv[2], "check") == 0 && argc >= 4) {
+		std::string path;
+		std::vector<std::string> problems;
+		status_t status = CursorThemes::Build(argv[3],
+			CursorThemes::CurrentScale(), path, problems);
+		for (const std::string& problem : problems)
+			printf("warning: %s\n", problem.c_str());
+		if (status != B_OK) {
+			BString message;
+			message << "theme '" << argv[3] << "' unusable: " << strerror(status);
+			return Fail("%s", message.String());
+		}
+		printf("ok: %s (scale %.2f)\n", path.c_str(),
+			CursorThemes::CurrentScale());
+		return 0;
+	}
+	if (strcmp(argv[2], "use") == 0 && argc >= 4) {
+		std::string name = strcmp(argv[3], "stock") == 0 ? "" : argv[3];
+		if (!name.empty() && CursorThemes::Find(name).empty())
+			return Fail("no cursor theme named '%s'", argv[3]);
+		std::string json = "\"" + name + "\"";
+		char* args[] = { argv[0], (char*)"set",
+			(char*)"appearance.cursorTheme", (char*)json.c_str() };
+		LuminaClient client;
+		return CmdSet(client, 4, args);
+	}
+	fputs(kUsage, stderr);
+	return 1;
+}
+
 int
 main(int argc, char** argv)
 {
@@ -536,6 +590,8 @@ main(int argc, char** argv)
 		return CmdDiag(client);
 	if (strcmp(command, "snapshot") == 0)
 		return PrintJson(SystemAppearance::Capture());
+	if (strcmp(command, "cursors") == 0)
+		return CmdCursors(argc, argv);
 	if (strcmp(command, "bench-glass") == 0)
 		return CmdBenchGlass(argc, argv);
 	fputs(kUsage, stderr);

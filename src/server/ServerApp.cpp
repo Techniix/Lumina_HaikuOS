@@ -12,6 +12,7 @@
 
 #include <Deskbar.h>
 #include <Screen.h>
+#include <Window.h>
 
 #include <Entry.h>
 #include <MessageRunner.h>
@@ -35,6 +36,7 @@
 
 #include "EffectsController.h"
 #include "EngineClock.h"
+#include <lumina/haiku/CursorThemes.h>
 
 using namespace lumina::haiku;
 
@@ -69,6 +71,7 @@ ServerApp::ServerApp()
 	fEngine(NULL),
 	fClock(NULL),
 	fEffects(NULL),
+	fLifecycleLive(false),
 	fEngineLive(false),
 	fPollRunner(NULL),
 	fRevertRunner(NULL),
@@ -480,6 +483,57 @@ ServerApp::_ApplyEngineSelection()
 
 
 void
+ServerApp::_ConfigureLifecycle(Value& config)
+{
+	// Engine-side close/hide/minimize/restore transitions (Level 2, see
+	// docs/07). Independent of the other effects: off unless
+	// fx.lifecycle.enabled.
+	Value& lifecycle = config["lifecycle"];
+	lifecycle["enabled"] = fConfig.GetBool("fx.lifecycle.enabled", false);
+	lifecycle["close"] = fConfig.GetBool("fx.lifecycle.close", true);
+	lifecycle["minimize"] = fConfig.GetBool("fx.lifecycle.minimize", true);
+	lifecycle["restore"] = fConfig.GetBool("fx.lifecycle.restore", true);
+	lifecycle["fade"] = fConfig.GetBool("fx.lifecycle.fade", false);
+	lifecycle["durationMs"] = fConfig.GetNumber("fx.lifecycle.durationMs", 200);
+	lifecycle["closeScale"] = fConfig.GetNumber("fx.lifecycle.closeScale", 0.9);
+	lifecycle["minVisible"] = fConfig.GetNumber("fx.lifecycle.minVisible", 0.8);
+	lifecycle["cacheBudgetMB"]
+		= fConfig.GetNumber("fx.lifecycle.cacheBudgetMB", 48);
+}
+
+
+void
+ServerApp::_ApplyCursorTheme()
+{
+	// appearance.cursorTheme: "" = stock. The theme is converted to
+	// app_server's CursorSet format here and applied by the engine with
+	// CursorManager::SetCursorSet() (docs/07 §G).
+	if (!fEngineLive)
+		return;
+	std::string theme = fConfig.GetString("appearance.cursorTheme", "");
+	std::string path;
+	if (!theme.empty()) {
+		std::vector<std::string> problems;
+		status_t status = haiku::CursorThemes::Build(theme,
+			haiku::CursorThemes::CurrentScale(), path, problems);
+		for (const std::string& problem : problems)
+			LUMINA_LOG_WARN(kLog, "cursor theme: %s", problem.c_str());
+		if (status != B_OK)
+			path.clear();	// fall back to the stock cursors
+	}
+	if (path == fCursorSet)
+		return;
+	BMessage command;
+	command.AddString(LUMINA_ENGINE_FIELD_OP, LUMINA_OP_CURSOR_THEME);
+	command.AddString(LUMINA_ENGINE_FIELD_PATH, path.c_str());
+	if (fEngine->Send(command) == B_OK)
+		fCursorSet = path;
+	LUMINA_LOG_INFO(kLog, "cursor theme: %s", path.empty() ? "stock"
+		: path.c_str());
+}
+
+
+void
 ServerApp::_ProbeEngine()
 {
 	EngineInfo info;
@@ -490,6 +544,9 @@ ServerApp::_ProbeEngine()
 		snooze(50000);
 	}
 	fEngineLive = info.present && info.active;
+	// A (re)loaded engine knows no proxies and shows stock cursors.
+	fLifecycleLive = false;
+	fCursorSet.clear();
 	fEngineReason = !info.present ? "engine not responding (decorator not "
 		"selected?)" : info.reason;
 	LUMINA_LOG_INFO(kLog, "engine: present=%d active=%d built=%s running=%s %s",
@@ -512,9 +569,19 @@ ServerApp::_CheckEngineHealth()
 		return;
 	}
 	bool orphaned = info.statsJson.FindFirst("\"subscribers\":0") >= 0;
+	if (fLifecycleLive && info.statsJson.FindFirst("\"proxies\":0") >= 0) {
+		// The engine lost its proxy pool (e.g. a screen mode change made
+		// the bitmaps too small, or a re-registration failed): rebuild.
+		LUMINA_LOG_INFO(kLog, "engine has no lifecycle proxies: re-registering");
+		fLifecycleLive = false;
+		if (!orphaned && fEngineLive)
+			_ConfigureEngine();
+	}
 	if (!fEngineLive || orphaned) {
 		LUMINA_LOG_INFO(kLog, "engine (re)attached: resubscribing");
 		fEngineLive = info.active;
+		fLifecycleLive = false;
+		fCursorSet.clear();
 		fEngineReason = info.reason;
 		if (fEngineLive) {
 			fEngine->Subscribe(BMessenger(this));
@@ -557,7 +624,19 @@ ServerApp::_ConfigureEngine()
 		reserved.Push(r);
 	}
 	config["reserved"] = reserved;
+	_ConfigureLifecycle(config);
 	fEngine->Configure(WriteJson(config, {false, 0}).c_str());
+
+	// Proxies after the configuration, so the engine never sees a pool
+	// while lifecycle transitions are off (and vice versa).
+	bool wantLifecycle = config["lifecycle"]["enabled"].AsBool();
+	if (wantLifecycle && !fLifecycleLive)
+		fLifecycleLive = fProxies.Register(fEngine) == B_OK;
+	else if (!wantLifecycle && fLifecycleLive) {
+		fProxies.Release(fEngine);
+		fLifecycleLive = false;
+	}
+	_ApplyCursorTheme();
 	LUMINA_LOG_DEBUG(kLog, "engine configured: %s (%s)",
 		WriteJson(config, {false, 0}).c_str(), plan.reason.c_str());
 }
@@ -718,6 +797,13 @@ ServerApp::_HandleEngineEvent(BMessage* message)
 		fClock->AnimationStarted(token, message->GetInt32("lumina:fps", 60));
 		return;
 	}
+	if (strcmp(op, LUMINA_EVENT_LIFECYCLE) == 0) {
+		LUMINA_LOG_DEBUG(kLog, "lifecycle %s of window %d via proxy %d (%s)",
+			message->GetString(LUMINA_EV_KIND, "?"), int(token),
+			int(message->GetInt32(LUMINA_EV_PROXY, -1)),
+			message->GetString(LUMINA_EV_DECISION, "?"));
+		return;
+	}
 	if (strcmp(op, "parked") == 0) {
 		BRect frame;
 		message->FindRect(LUMINA_EV_FRAME, &frame);
@@ -768,6 +854,28 @@ ServerApp::_ApplyRules(const WindowSnapshot& window)
 	descriptor.title = window.title.String();
 	descriptor.width = window.frame.Width();
 	descriptor.height = window.frame.Height();
+	// Names as documented in lumina/Rules.h. The look is only known from
+	// engine events (window_info has no look); unknown → rules on look
+	// don't match.
+	switch (window.feel) {
+		case B_NORMAL_WINDOW_FEEL:			descriptor.feel = "normal"; break;
+		case B_MODAL_APP_WINDOW_FEEL:		descriptor.feel = "modal-app"; break;
+		case B_MODAL_SUBSET_WINDOW_FEEL:	descriptor.feel = "modal-subset"; break;
+		case B_MODAL_ALL_WINDOW_FEEL:		descriptor.feel = "modal-all"; break;
+		case B_FLOATING_APP_WINDOW_FEEL:	descriptor.feel = "floating-app"; break;
+		case B_FLOATING_SUBSET_WINDOW_FEEL:
+			descriptor.feel = "floating-subset";
+			break;
+		case B_FLOATING_ALL_WINDOW_FEEL:	descriptor.feel = "floating-all"; break;
+	}
+	switch (window.look) {
+		case B_TITLED_WINDOW_LOOK:		descriptor.look = "titled"; break;
+		case B_DOCUMENT_WINDOW_LOOK:	descriptor.look = "document"; break;
+		case B_MODAL_WINDOW_LOOK:		descriptor.look = "modal"; break;
+		case B_FLOATING_WINDOW_LOOK:	descriptor.look = "floating"; break;
+		case B_BORDERED_WINDOW_LOOK:	descriptor.look = "bordered"; break;
+		case B_NO_BORDER_WINDOW_LOOK:	descriptor.look = "no-border"; break;
+	}
 	for (int32 i = 0; i < 32; i++) {
 		if ((window.workspaces & (1UL << i)) != 0) {
 			descriptor.workspace = i;
@@ -789,6 +897,10 @@ ServerApp::_ApplyRules(const WindowSnapshot& window)
 				area.bottom -= entry.second.thickness;
 			else if (entry.second.edge == "top")
 				area.top += entry.second.thickness;
+			else if (entry.second.edge == "left")
+				area.left += entry.second.thickness;
+			else if (entry.second.edge == "right")
+				area.right -= entry.second.thickness;
 		}
 		RectF target;
 		if (PlacementRect(placement->AsString(), area, target)) {
@@ -1111,6 +1223,23 @@ ServerApp::_HandleWindowCommand(BMessage* message)
 	BString op = message->GetString(LUMINA_ENGINE_FIELD_OP, "");
 	int32 token = message->GetInt32(LUMINA_ENGINE_FIELD_TOKEN, -1);
 	BRect anchor;
+	if (fLifecycleLive && fEngineLive
+		&& message->FindRect(LUMINA_FIELD_ANCHOR, &anchor) == B_OK
+		&& (op == LUMINA_OP_MINIMIZE || op == LUMINA_OP_ACTIVATE)) {
+		// The engine animates every minimize/restore itself (whatever
+		// started it); just tell it where this window's button is.
+		BMessage anchors;
+		anchors.AddString(LUMINA_ENGINE_FIELD_OP, LUMINA_OP_ANCHORS);
+		anchors.AddInt32(LUMINA_ENGINE_FIELD_TOKEN, token);
+		anchors.AddRect(LUMINA_ENGINE_FIELD_FRAME, anchor);
+		fEngine->Send(anchors);
+		if (op == LUMINA_OP_MINIMIZE && message->GetBool("lumina:value", true))
+			PrivateApi::MinimizeWindow(token, true);
+		else
+			PrivateApi::BringToFront(token);
+		ReplyStatus(message, B_OK);
+		return;
+	}
 	if (message->FindRect(LUMINA_FIELD_ANCHOR, &anchor) == B_OK) {
 		// Panel-initiated minimize/restore: the effects engine decides
 		// whether a proxy transition plays; the action always happens.

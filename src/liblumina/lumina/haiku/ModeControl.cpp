@@ -145,6 +145,24 @@ RestoreStockLocally(std::vector<std::string>* failures, BString* report,
 		app.SendMessage(&quit, (BHandler*)NULL, 500000);
 	}
 
+	// 2b. If the Window Engine is loaded, put its system-wide changes back
+	// even before it is unloaded (it also does this itself when app_server
+	// unloads it): stock cursors, no lifecycle proxies, nothing parked or
+	// half-animated. Best effort — the engine may already be gone.
+	if (EngineLink::IsEngineSelected()) {
+		EngineLink link;
+		if (link.InitCheck() == B_OK) {
+			BMessage cursors;
+			cursors.AddString(LUMINA_ENGINE_FIELD_OP, LUMINA_OP_CURSOR_THEME);
+			cursors.AddString(LUMINA_ENGINE_FIELD_PATH, "");
+			link.Send(cursors);
+			BMessage proxies;
+			proxies.AddString(LUMINA_ENGINE_FIELD_OP, LUMINA_OP_PROXIES);
+			link.Send(proxies);
+			link.Finish();
+		}
+	}
+
 	// 3. System appearance: the pristine snapshot, else built-in defaults.
 	Value snapshot;
 	std::vector<std::string> local;	// always tracked, even if caller passes NULL

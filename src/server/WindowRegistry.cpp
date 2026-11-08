@@ -61,6 +61,7 @@ WindowRegistry::ApplyEngineEvent(const BMessage& event)
 	event.FindRect(LUMINA_EV_FRAME, &w.frame);
 	w.workspaces = uint32(event.GetInt32(LUMINA_EV_WORKSPACES, 0));
 	w.feel = uint32(event.GetInt32(LUMINA_EV_FEEL, 0));
+	w.look = event.GetInt32(LUMINA_EV_LOOK, -1);
 
 	auto it = fWindows.find(w.token);
 	if (strcmp(op, LUMINA_EVENT_REMOVED) == 0) {
